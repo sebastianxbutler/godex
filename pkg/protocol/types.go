@@ -10,8 +10,8 @@ type ResponsesRequest struct {
 	ToolChoice        string              `json:"tool_choice,omitempty"`
 	ParallelToolCalls bool                `json:"parallel_tool_calls,omitempty"`
 	Reasoning         *Reasoning          `json:"reasoning,omitempty"`
-	Store             bool                `json:"store,omitempty"`
-	Stream            bool                `json:"stream,omitempty"`
+	Store             bool                `json:"store"`
+	Stream            bool                `json:"stream"`
 	Include           []string            `json:"include,omitempty"`
 	PromptCacheKey    string              `json:"prompt_cache_key,omitempty"`
 	Text              *TextControls       `json:"text,omitempty"`

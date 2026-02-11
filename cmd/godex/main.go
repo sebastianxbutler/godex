@@ -103,6 +103,10 @@ func runExec(args []string) error {
 		toolSpecs = append(toolSpecs, protocol.ToolSpec{Type: "web_search", ExternalWebAccess: true})
 	}
 
+	if strings.TrimSpace(instructions) == "" {
+		instructions = "You are a helpful assistant."
+	}
+
 	req := protocol.ResponsesRequest{
 		Model:             model,
 		Instructions:      instructions,

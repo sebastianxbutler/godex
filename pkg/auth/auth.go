@@ -45,6 +45,32 @@ type IDTokenV1 struct {
 	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
 }
 
+func (t *IDTokenV1) UnmarshalJSON(data []byte) error {
+	// Accept either a string JWT or an object with fields.
+	if len(data) == 0 {
+		return nil
+	}
+	if data[0] == '"' {
+		var raw string
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		t.RawJWT = raw
+		return nil
+	}
+	// Fallback to object
+	var aux struct {
+		RawJWT           string `json:"raw_jwt"`
+		ChatGPTAccountID string `json:"chatgpt_account_id"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	t.RawJWT = aux.RawJWT
+	t.ChatGPTAccountID = aux.ChatGPTAccountID
+	return nil
+}
+
 type Store struct {
 	path string
 	mu   sync.Mutex
