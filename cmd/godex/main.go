@@ -496,6 +496,7 @@ func runProxy(args []string) error {
 	var statsPath string
 	var statsMaxBytes int64
 	var statsMaxBackups int
+	var meterWindow string
 
 	fs.StringVar(&listen, "listen", envOrDefault("GODEX_PROXY_LISTEN", "127.0.0.1:39001"), "Listen address")
 	fs.StringVar(&apiKey, "api-key", os.Getenv("GODEX_PROXY_API_KEY"), "API key")
@@ -516,6 +517,7 @@ func runProxy(args []string) error {
 	fs.StringVar(&statsPath, "stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", proxy.DefaultStatsPath()), "Usage stats JSONL path")
 	fs.Int64Var(&statsMaxBytes, "stats-max-bytes", envInt64("GODEX_PROXY_STATS_MAX_BYTES", 10*1024*1024), "Max stats file size before rotation")
 	fs.IntVar(&statsMaxBackups, "stats-max-backups", envInt("GODEX_PROXY_STATS_MAX_BACKUPS", 3), "Max rotated stats files to keep")
+	fs.StringVar(&meterWindow, "meter-window", envOrDefault("GODEX_PROXY_METER_WINDOW", ""), "Metering window duration (e.g. 24h); empty disables window")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -529,6 +531,13 @@ func runProxy(args []string) error {
 	ttl, err := time.ParseDuration(cacheTTL)
 	if err != nil {
 		return fmt.Errorf("invalid --cache-ttl: %w", err)
+	}
+	var window time.Duration
+	if strings.TrimSpace(meterWindow) != "" {
+		window, err = time.ParseDuration(meterWindow)
+		if err != nil {
+			return fmt.Errorf("invalid --meter-window: %w", err)
+		}
 	}
 
 	cfg := proxy.Config{
@@ -551,6 +560,7 @@ func runProxy(args []string) error {
 		StatsPath:       statsPath,
 		StatsMaxBytes:   statsMaxBytes,
 		StatsMaxBackups: statsMaxBackups,
+		MeterWindow:     window,
 	}
 	return proxy.Run(cfg)
 }

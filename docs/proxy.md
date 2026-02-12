@@ -125,8 +125,11 @@ export OPENAI_BASE_URL="http://127.0.0.1:39001/v1"
 - `--stats-path` (default: `~/.codex/proxy-usage.jsonl`)
 - `--stats-max-bytes` (default: `10485760`)
 - `--stats-max-backups` (default: `3`)
+- `--meter-window` (default: empty; counts since proxy start)
 
 The stats log rotates to `.1`, `.2`, ... when the size limit is exceeded.
+
+Metering totals are rebuilt on startup by scanning the usage log within the window.
 
 ## Environment variables
 
@@ -147,6 +150,7 @@ The stats log rotates to `.1`, `.2`, ... when the size limit is exceeded.
 - `GODEX_PROXY_STATS_PATH`
 - `GODEX_PROXY_STATS_MAX_BYTES`
 - `GODEX_PROXY_STATS_MAX_BACKUPS`
+- `GODEX_PROXY_METER_WINDOW`
 
 ## Prompt cache reuse
 

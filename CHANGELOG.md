@@ -15,6 +15,7 @@
 - Added BYOK support for proxy keys (--key).
 - Added stats log rotation for proxy usage logs.
 - Added proxy key update command (keys update).
+- Added persistent metering with windowed totals.
 
 ## 0.2.0 - 2026-02-12
 - Add OpenAI-compatible proxy (`/v1/responses`, `/v1/models`, `/v1/chat/completions`)

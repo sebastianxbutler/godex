@@ -24,12 +24,13 @@ type UsageStore struct {
 	path       string
 	maxBytes   int64
 	maxBackups int
+	window     time.Duration
 	mu         sync.Mutex
 	counts     map[string]int
 }
 
-func NewUsageStore(path string, maxBytes int64, maxBackups int) *UsageStore {
-	return &UsageStore{path: path, maxBytes: maxBytes, maxBackups: maxBackups, counts: map[string]int{}}
+func NewUsageStore(path string, maxBytes int64, maxBackups int, window time.Duration) *UsageStore {
+	return &UsageStore{path: path, maxBytes: maxBytes, maxBackups: maxBackups, window: window, counts: map[string]int{}}
 }
 
 func (u *UsageStore) Record(ev UsageEvent) {
@@ -67,6 +68,20 @@ func (u *UsageStore) TotalTokens(keyID string) int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.counts[keyID]
+}
+
+func (u *UsageStore) LoadFromFile() error {
+	events, err := ReadUsage(u.path, u.window, "")
+	if err != nil {
+		return err
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.counts = map[string]int{}
+	for _, ev := range events {
+		u.counts[ev.KeyID] += ev.TotalTokens
+	}
+	return nil
 }
 
 type UsageSummary struct {

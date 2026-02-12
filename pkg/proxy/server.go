@@ -40,6 +40,7 @@ type Config struct {
 	StatsPath       string
 	StatsMaxBytes   int64
 	StatsMaxBackups int
+	MeterWindow     time.Duration
 }
 
 type Server struct {
@@ -110,7 +111,8 @@ func Run(cfg Config) error {
 		}
 	}
 
-	usage := NewUsageStore(cfg.StatsPath, cfg.StatsMaxBytes, cfg.StatsMaxBackups)
+	usage := NewUsageStore(cfg.StatsPath, cfg.StatsMaxBytes, cfg.StatsMaxBackups, cfg.MeterWindow)
+	_ = usage.LoadFromFile()
 	limiters := NewLimiterStore(cfg.RateLimit, cfg.Burst)
 
 	s := &Server{
