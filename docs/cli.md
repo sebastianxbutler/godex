@@ -6,6 +6,9 @@ Godex exposes these primary commands:
 - `godex proxy` — run an OpenAI‑compatible proxy server
 - `godex version` / `--version` — show build version
 
+Config:
+- `--config <path>` — use a specific YAML config file (default `~/.config/godex/config.yaml`)
+
 ## `godex exec`
 
 ### Required

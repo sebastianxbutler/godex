@@ -141,9 +141,12 @@ func DefaultPath() string {
 }
 
 func Load() Config {
+	return LoadFrom(DefaultPath())
+}
+
+func LoadFrom(path string) Config {
 	cfg := DefaultConfig()
-	path := DefaultPath()
-	if path != "" {
+	if strings.TrimSpace(path) != "" {
 		if buf, err := os.ReadFile(path); err == nil {
 			_ = yaml.Unmarshal(buf, &cfg)
 		}

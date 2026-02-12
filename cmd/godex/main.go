@@ -67,7 +67,7 @@ func runExec(args []string) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	cfg := config.Load()
+	cfg := config.LoadFrom(configPathFromArgs(args))
 
 	var prompt string
 	var model string
@@ -90,6 +90,7 @@ func runExec(args []string) error {
 	var logRequests string
 	var logResponses string
 
+	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	fs.StringVar(&prompt, "prompt", "", "User prompt")
 	fs.StringVar(&model, "model", cfg.Exec.Model, "Model name")
 	fs.StringVar(&instructions, "instructions", cfg.Exec.Instructions, "Optional system instructions")
@@ -114,6 +115,7 @@ func runExec(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	_ = configPath
 	if strings.TrimSpace(prompt) == "" && strings.TrimSpace(inputJSON) == "" {
 		return errors.New("--prompt is required unless --input-json is provided")
 	}
@@ -492,7 +494,7 @@ func runProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	cfg := config.Load()
+	cfg := config.LoadFrom(configPathFromArgs(args))
 
 	var listen string
 	var apiKey string
@@ -519,6 +521,7 @@ func runProxy(args []string) error {
 	var eventsBackups int
 	var meterWindow string
 
+	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	fs.StringVar(&listen, "listen", cfg.Proxy.Listen, "Listen address")
 	fs.StringVar(&apiKey, "api-key", cfg.Proxy.APIKey, "API key")
 	fs.StringVar(&model, "model", cfg.Proxy.Model, "Model name")
@@ -547,6 +550,7 @@ func runProxy(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	_ = configPath
 	if strings.TrimSpace(apiKey) == "" && !allowAnyKey {
 		return fmt.Errorf("--api-key is required")
 	}
@@ -602,7 +606,8 @@ func runProxyKeys(args []string) error {
 
 	fs := flag.NewFlagSet("proxy keys", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	cfg := config.Load()
+	cfg := config.LoadFrom(configPathFromArgs(args))
+	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	keysPath := fs.String("keys-path", defaultString(cfg.Proxy.KeysPath, proxy.DefaultKeysPath()), "API keys file")
 	label := fs.String("label", "", "Key label")
 	providedKey := fs.String("key", "", "Use a pre-generated API key (BYOK)")
@@ -613,6 +618,7 @@ func runProxyKeys(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
+	_ = configPath
 
 	store, err := proxy.LoadKeyStore(*keysPath)
 	if err != nil {
@@ -694,13 +700,15 @@ func runProxyUsage(args []string) error {
 
 	fs := flag.NewFlagSet("proxy usage", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	cfg := config.Load()
+	cfg := config.LoadFrom(configPathFromArgs(args))
+	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	statsPath := fs.String("stats-path", defaultString(cfg.Proxy.StatsPath, ""), "Usage JSONL path")
 	sinceStr := fs.String("since", "", "Lookback duration (e.g. 24h)")
 	keyID := fs.String("key", "", "Key id filter")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
+	_ = configPath
 	var since time.Duration
 	if strings.TrimSpace(*sinceStr) != "" {
 		d, err := time.ParseDuration(*sinceStr)
@@ -815,10 +823,23 @@ func defaultInt64(value, fallback int64) int64 {
 	return value
 }
 
+func configPathFromArgs(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--config=") {
+			return strings.TrimPrefix(arg, "--config=")
+		}
+		if arg == "--config" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return config.DefaultPath()
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: godex exec --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
-	fmt.Fprintln(os.Stderr, "       godex proxy --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
-	fmt.Fprintln(os.Stderr, "       godex proxy keys add --label <label> [--rate 60/m] [--burst 10] [--quota-tokens N]")
+	fmt.Fprintln(os.Stderr, "usage: godex exec --config <path> --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
+	fmt.Fprintln(os.Stderr, "       godex proxy --config <path> --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
+	fmt.Fprintln(os.Stderr, "       godex proxy keys --config <path> add --label <label> [--rate 60/m] [--burst 10] [--quota-tokens N]")
 	fmt.Fprintln(os.Stderr, "       godex proxy keys list | update <id> | revoke <id|key> | rotate <id|key>")
-	fmt.Fprintln(os.Stderr, "       godex proxy usage list [--since 24h] [--key <id>] | show <id>")
+	fmt.Fprintln(os.Stderr, "       godex proxy usage --config <path> list [--since 24h] [--key <id>] | show <id>")
 }
