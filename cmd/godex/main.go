@@ -579,6 +579,7 @@ func runProxyKeys(args []string) error {
 	rate := fs.String("rate", "60/m", "Rate limit")
 	burst := fs.Int("burst", 10, "Burst")
 	quota := fs.Int64("quota-tokens", 0, "Token quota")
+	expiresIn := fs.String("expires-in", "", "Key TTL (e.g. 24h); empty = no expiry")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -590,7 +591,15 @@ func runProxyKeys(args []string) error {
 
 	switch cmd {
 	case "add":
-		rec, secret, err := store.Add(*label, *rate, *burst, *quota, *providedKey)
+		var ttl time.Duration
+		if strings.TrimSpace(*expiresIn) != "" {
+			d, err := time.ParseDuration(*expiresIn)
+			if err != nil {
+				return err
+			}
+			ttl = d
+		}
+		rec, secret, err := store.Add(*label, *rate, *burst, *quota, *providedKey, ttl)
 		if err != nil {
 			return err
 		}
@@ -601,7 +610,11 @@ func runProxyKeys(args []string) error {
 			if rec.RevokedAt != nil {
 				revoked = rec.RevokedAt.Format(time.RFC3339)
 			}
-			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\n", rec.ID, rec.Label, rec.CreatedAt.Format(time.RFC3339), revoked, rec.Rate, rec.Burst, rec.QuotaTokens)
+			expires := ""
+			if rec.ExpiresAt != nil {
+				expires = rec.ExpiresAt.Format(time.RFC3339)
+			}
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", rec.ID, rec.Label, rec.CreatedAt.Format(time.RFC3339), revoked, rec.Rate, rec.Burst, rec.QuotaTokens, expires)
 		}
 	case "revoke":
 		if len(fs.Args()) == 0 {
@@ -615,7 +628,15 @@ func runProxyKeys(args []string) error {
 		if len(fs.Args()) == 0 {
 			return errors.New("update requires id")
 		}
-		rec, err := store.Update(fs.Args()[0], *label, *rate, *burst, *quota)
+		var ttl time.Duration
+		if strings.TrimSpace(*expiresIn) != "" {
+			d, err := time.ParseDuration(*expiresIn)
+			if err != nil {
+				return err
+			}
+			ttl = d
+		}
+		rec, err := store.Update(fs.Args()[0], *label, *rate, *burst, *quota, ttl)
 		if err != nil {
 			return err
 		}
@@ -746,6 +767,6 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: godex exec --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
 	fmt.Fprintln(os.Stderr, "       godex proxy --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
 	fmt.Fprintln(os.Stderr, "       godex proxy keys add --label <label> [--rate 60/m] [--burst 10] [--quota-tokens N]")
-	fmt.Fprintln(os.Stderr, "       godex proxy keys list | revoke <id|key> | rotate <id|key>")
+	fmt.Fprintln(os.Stderr, "       godex proxy keys list | update <id> | revoke <id|key> | rotate <id|key>")
 	fmt.Fprintln(os.Stderr, "       godex proxy usage list [--since 24h] [--key <id>] | show <id>")
 }

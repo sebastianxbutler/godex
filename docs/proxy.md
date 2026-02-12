@@ -32,17 +32,22 @@ You can manage multiple keys via CLI:
 # Bring your own key (BYOK)
 ./godex proxy keys add --label "agent-x" --key "gxk_..."
 
+# Set a key expiration
+./godex proxy keys add --label "agent-exp" --expires-in 24h
+
 # List keys
 ./godex proxy keys list
 
 # Revoke or rotate
 ./godex proxy keys revoke key_abc123
-./godex proxy keys update key_abc123 --label "agent-new" --rate 30/m --burst 5 --quota-tokens 100000
+./godex proxy keys update key_abc123 --label "agent-new" --rate 30/m --burst 5 --quota-tokens 100000 --expires-in 72h
 ./godex proxy keys rotate key_abc123
 ```
 
 Keys are stored hashed (no plaintext) in:
 - `~/.codex/proxy-keys.json` (or `--keys-path`)
+
+If `--expires-in` is set, keys expire automatically and are pruned on proxy restart.
 
 ### Allow any key (dev only)
 ```bash

@@ -73,8 +73,9 @@ Key management:
 ```bash
 ./godex proxy keys add --label "agent-a" --rate 60/m --burst 10
 ./godex proxy keys add --label "agent-x" --key "gxk_..."   # BYOK
+./godex proxy keys add --label "agent-exp" --expires-in 24h   # expires after 24h
 ./godex proxy keys list
-./godex proxy keys update key_abc123 --label "agent-new" --rate 30/m --burst 5 --quota-tokens 100000
+./godex proxy keys update key_abc123 --label "agent-new" --rate 30/m --burst 5 --quota-tokens 100000 --expires-in 72h
 ./godex proxy keys revoke key_abc123
 ./godex proxy keys rotate key_abc123
 ```

@@ -20,6 +20,7 @@ type KeyRecord struct {
 	Hash        string     `json:"hash"`
 	CreatedAt   time.Time  `json:"created_at"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	Rate        string     `json:"rate,omitempty"`
 	Burst       int        `json:"burst,omitempty"`
 	QuotaTokens int64      `json:"quota_tokens,omitempty"`
@@ -57,6 +58,7 @@ func LoadKeyStore(path string) (*KeyStore, error) {
 	if ks.file.Version == 0 {
 		ks.file.Version = 1
 	}
+	ks.PruneExpired()
 	return ks, nil
 }
 
@@ -82,7 +84,7 @@ func (s *KeyStore) List() []KeyRecord {
 	return out
 }
 
-func (s *KeyStore) Add(label string, rate string, burst int, quota int64, providedKey string) (KeyRecord, string, error) {
+func (s *KeyStore) Add(label string, rate string, burst int, quota int64, providedKey string, ttl time.Duration) (KeyRecord, string, error) {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return KeyRecord{}, "", errors.New("label is required")
@@ -106,6 +108,10 @@ func (s *KeyStore) Add(label string, rate string, burst int, quota int64, provid
 		Rate:        rate,
 		Burst:       burst,
 		QuotaTokens: quota,
+	}
+	if ttl > 0 {
+		expires := time.Now().UTC().Add(ttl)
+		rec.ExpiresAt = &expires
 	}
 
 	s.mu.Lock()
@@ -136,7 +142,7 @@ func (s *KeyStore) Revoke(idOrToken string) (KeyRecord, bool) {
 	return KeyRecord{}, false
 }
 
-func (s *KeyStore) Update(id string, label string, rate string, burst int, quota int64) (KeyRecord, error) {
+func (s *KeyStore) Update(id string, label string, rate string, burst int, quota int64, ttl time.Duration) (KeyRecord, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return KeyRecord{}, errors.New("id required")
@@ -159,6 +165,10 @@ func (s *KeyStore) Update(id string, label string, rate string, burst int, quota
 		if quota != 0 {
 			rec.QuotaTokens = quota
 		}
+		if ttl > 0 {
+			expires := time.Now().UTC().Add(ttl)
+			rec.ExpiresAt = &expires
+		}
 		s.file.Keys[i] = rec
 		if err := s.saveLocked(); err != nil {
 			return KeyRecord{}, err
@@ -173,22 +183,41 @@ func (s *KeyStore) Rotate(idOrToken string) (KeyRecord, string, error) {
 	if !ok {
 		return KeyRecord{}, "", errors.New("key not found")
 	}
-	return s.Add(rec.Label, rec.Rate, rec.Burst, rec.QuotaTokens, "")
+	return s.Add(rec.Label, rec.Rate, rec.Burst, rec.QuotaTokens, "", 0)
 }
 
 func (s *KeyStore) Validate(token string) (KeyRecord, bool) {
 	hash := hashToken(token)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now().UTC()
 	for _, rec := range s.file.Keys {
 		if rec.Hash == hash {
 			if rec.RevokedAt != nil {
+				return KeyRecord{}, false
+			}
+			if rec.ExpiresAt != nil && rec.ExpiresAt.Before(now) {
 				return KeyRecord{}, false
 			}
 			return rec, true
 		}
 	}
 	return KeyRecord{}, false
+}
+
+func (s *KeyStore) PruneExpired() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	filtered := s.file.Keys[:0]
+	for _, rec := range s.file.Keys {
+		if rec.ExpiresAt != nil && rec.ExpiresAt.Before(now) {
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	s.file.Keys = filtered
+	_ = s.saveLocked()
 }
 
 func hashToken(token string) string {
