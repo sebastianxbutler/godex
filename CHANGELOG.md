@@ -6,6 +6,7 @@
 - Added mock modes: echo, text, tool-call, tool-loop.
 - Normalized JSONL error events and tool argument completion.
 - Added proxy API key management (keys, usage, rate limiting, token metering).
+- Added build-time version flag (--version).
 
 ## 0.2.0 - 2026-02-12
 - Add OpenAI-compatible proxy (`/v1/responses`, `/v1/models`, `/v1/chat/completions`)

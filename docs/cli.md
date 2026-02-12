@@ -1,9 +1,10 @@
 # CLI Usage
 
-Godex exposes two primary commands:
+Godex exposes these primary commands:
 
 - `godex exec` — run a single Responses API call (supports tools + streaming)
 - `godex proxy` — run an OpenAI‑compatible proxy server
+- `godex version` / `--version` — show build version
 
 ## `godex exec`
 

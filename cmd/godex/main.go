@@ -35,12 +35,17 @@ func (o *outputFlags) Set(v string) error {
 	return nil
 }
 
+var Version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "--version", "version", "-v":
+		fmt.Println(Version)
+		return
 	case "exec":
 		if err := runExec(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)

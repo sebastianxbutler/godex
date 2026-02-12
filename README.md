@@ -41,7 +41,7 @@ If you want a pragmatic, inspectable client for the Responses API, this is it.
 ## Install
 
 ```bash
-go build ./cmd/godex
+make build
 ```
 
 ## Usage
