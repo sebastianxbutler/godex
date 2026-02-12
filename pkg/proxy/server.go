@@ -33,6 +33,11 @@ type Config struct {
 	CacheTTL     time.Duration
 	LogLevel     string
 	LogRequests  bool
+	KeysPath     string
+	RateLimit    string
+	Burst        int
+	QuotaTokens  int64
+	StatsPath    string
 }
 
 type Server struct {
@@ -41,6 +46,9 @@ type Server struct {
 	httpClient *http.Client
 	authStore  *auth.Store
 	logger     *Logger
+	keys       *KeyStore
+	limiters   *LimiterStore
+	usage      *UsageStore
 }
 
 func Run(cfg Config) error {
@@ -56,6 +64,18 @@ func Run(cfg Config) error {
 	if cfg.APIKey == "" && !cfg.AllowAnyKey {
 		return fmt.Errorf("api key is required")
 	}
+	if strings.TrimSpace(cfg.KeysPath) == "" {
+		cfg.KeysPath = DefaultKeysPath()
+	}
+	if strings.TrimSpace(cfg.StatsPath) == "" {
+		cfg.StatsPath = DefaultStatsPath()
+	}
+	if strings.TrimSpace(cfg.RateLimit) == "" {
+		cfg.RateLimit = "60/m"
+	}
+	if cfg.Burst == 0 {
+		cfg.Burst = 10
+	}
 
 	authPath := strings.TrimSpace(cfg.AuthPath)
 	var err error
@@ -70,12 +90,30 @@ func Run(cfg Config) error {
 		return err
 	}
 
+	var keys *KeyStore
+	if !cfg.AllowAnyKey {
+		keysPath := strings.TrimSpace(cfg.KeysPath)
+		if keysPath == "" {
+			keysPath = DefaultKeysPath()
+		}
+		keys, err = LoadKeyStore(keysPath)
+		if err != nil {
+			return err
+		}
+	}
+
+	usage := NewUsageStore(cfg.StatsPath)
+	limiters := NewLimiterStore(cfg.RateLimit, cfg.Burst)
+
 	s := &Server{
 		cfg:        cfg,
 		cache:      NewCache(cfg.CacheTTL),
 		httpClient: http.DefaultClient,
 		authStore:  store,
 		logger:     NewLogger(ParseLogLevel(cfg.LogLevel)),
+		keys:       keys,
+		limiters:   limiters,
+		usage:      usage,
 	}
 
 	mux := http.NewServeMux()
@@ -105,7 +143,11 @@ func (s *Server) clientForSession(sessionID string) *client.Client {
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	if !s.requireAuth(w, r) {
+	key, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowRequest(w, r, key) {
 		return
 	}
 	resp := OpenAIModelsResponse{
@@ -122,7 +164,11 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	if !s.requireAuth(w, r) {
+	key, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowRequest(w, r, key) {
 		return
 	}
 	var req OpenAIResponsesRequest
@@ -183,6 +229,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		s.cache.SaveToolCalls(sessionKey, toolCallsFromResult(result))
 		resp := responsesResponseFromResult(req.Model, result)
 		writeJSON(w, http.StatusOK, resp)
+		s.recordUsage(r, key, http.StatusOK, nil)
 		s.logRequest(r, http.StatusOK, start)
 		return
 	}
@@ -200,8 +247,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	collector := sse.NewCollector()
 	callNames := map[string]string{}
 
+	var usage *protocol.Usage
 	err = cl.StreamResponses(r.Context(), codexReq, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
+		if ev.Value.Response != nil && ev.Value.Response.Usage != nil {
+			usage = ev.Value.Response.Usage
+		}
 		if ev.Value.Type == "response.output_item.added" && ev.Value.Item != nil {
 			if ev.Value.Item.Type == "function_call" && ev.Value.Item.CallID != "" {
 				callNames[ev.Value.Item.CallID] = ev.Value.Item.Name
@@ -225,28 +276,36 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	s.cache.SaveToolCalls(sessionKey, calls)
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
+	s.recordUsage(r, key, http.StatusOK, usage)
 	s.logRequest(r, http.StatusOK, start)
 }
 
-func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) bool {
-	if s.cfg.APIKey == "" {
-		if s.cfg.AllowAnyKey {
-			return true
-		}
-		writeError(w, http.StatusUnauthorized, errors.New("missing API key"))
-		return false
-	}
+func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (*KeyRecord, bool) {
 	authz := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authz, "Bearer ") {
+		if s.cfg.AllowAnyKey {
+			return &KeyRecord{ID: "anonymous", Label: "anonymous"}, true
+		}
 		writeError(w, http.StatusUnauthorized, errors.New("missing bearer token"))
-		return false
+		return nil, false
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
-	if !s.cfg.AllowAnyKey && token != s.cfg.APIKey {
-		writeError(w, http.StatusUnauthorized, errors.New("invalid bearer token"))
-		return false
+	if s.cfg.AllowAnyKey {
+		return &KeyRecord{ID: hashToken(token), Label: "anonymous"}, true
 	}
-	return true
+	if s.cfg.APIKey != "" && token == s.cfg.APIKey {
+		return &KeyRecord{ID: "static", Label: "static"}, true
+	}
+	if s.keys == nil {
+		writeError(w, http.StatusUnauthorized, errors.New("invalid bearer token"))
+		return nil, false
+	}
+	rec, ok := s.keys.Validate(token)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, errors.New("invalid bearer token"))
+		return nil, false
+	}
+	return &rec, true
 }
 
 func (s *Server) sessionKey(user string, r *http.Request) string {

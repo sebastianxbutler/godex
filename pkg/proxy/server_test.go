@@ -12,7 +12,7 @@ func TestRequireAuthAllowAnyKey(t *testing.T) {
 	s := &Server{cfg: Config{AllowAnyKey: true}}
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	if !s.requireAuth(rr, req) {
+	if _, ok := s.requireAuth(rr, req); !ok {
 		t.Fatalf("expected allow-any-key to pass auth")
 	}
 }
@@ -21,7 +21,7 @@ func TestRequireAuthMissingKey(t *testing.T) {
 	s := &Server{cfg: Config{APIKey: "secret"}}
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-	if s.requireAuth(rr, req) {
+	if _, ok := s.requireAuth(rr, req); ok {
 		t.Fatalf("expected missing auth to fail")
 	}
 	if rr.Code != http.StatusUnauthorized {

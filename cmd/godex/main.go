@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -459,6 +460,15 @@ func newSessionID() (string, error) {
 }
 
 func runProxy(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "keys":
+			return runProxyKeys(args[1:])
+		case "usage":
+			return runProxyUsage(args[1:])
+		}
+	}
+
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -474,6 +484,11 @@ func runProxy(args []string) error {
 	var cacheTTL string
 	var logLevel string
 	var logRequests bool
+	var keysPath string
+	var rateLimit string
+	var burst int
+	var quotaTokens int64
+	var statsPath string
 
 	fs.StringVar(&listen, "listen", envOrDefault("GODEX_PROXY_LISTEN", "127.0.0.1:39001"), "Listen address")
 	fs.StringVar(&apiKey, "api-key", os.Getenv("GODEX_PROXY_API_KEY"), "API key")
@@ -487,6 +502,11 @@ func runProxy(args []string) error {
 	fs.StringVar(&cacheTTL, "cache-ttl", envOrDefault("GODEX_PROXY_CACHE_TTL", "6h"), "Prompt cache TTL")
 	fs.StringVar(&logLevel, "log-level", envOrDefault("GODEX_PROXY_LOG_LEVEL", "info"), "Log level (debug|info|warn|error)")
 	fs.BoolVar(&logRequests, "log-requests", envBool("GODEX_PROXY_LOG_REQUESTS"), "Log HTTP requests")
+	fs.StringVar(&keysPath, "keys-path", envOrDefault("GODEX_PROXY_KEYS_PATH", proxy.DefaultKeysPath()), "API keys file")
+	fs.StringVar(&rateLimit, "rate", envOrDefault("GODEX_PROXY_RATE", "60/m"), "Default rate limit (e.g. 60/m)")
+	fs.IntVar(&burst, "burst", envInt("GODEX_PROXY_BURST", 10), "Default rate burst")
+	fs.Int64Var(&quotaTokens, "quota-tokens", envInt64("GODEX_PROXY_QUOTA_TOKENS", 0), "Default token quota (0 = none)")
+	fs.StringVar(&statsPath, "stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", proxy.DefaultStatsPath()), "Usage stats JSONL path")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -515,8 +535,127 @@ func runProxy(args []string) error {
 		CacheTTL:     ttl,
 		LogLevel:     logLevel,
 		LogRequests:  logRequests,
+		KeysPath:     keysPath,
+		RateLimit:    rateLimit,
+		Burst:        burst,
+		QuotaTokens:  quotaTokens,
+		StatsPath:    statsPath,
 	}
 	return proxy.Run(cfg)
+}
+
+func runProxyKeys(args []string) error {
+	if len(args) == 0 {
+		return errors.New("proxy keys requires a subcommand")
+	}
+	cmd := args[0]
+
+	fs := flag.NewFlagSet("proxy keys", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	keysPath := fs.String("keys-path", envOrDefault("GODEX_PROXY_KEYS_PATH", proxy.DefaultKeysPath()), "API keys file")
+	label := fs.String("label", "", "Key label")
+	rate := fs.String("rate", "60/m", "Rate limit")
+	burst := fs.Int("burst", 10, "Burst")
+	quota := fs.Int64("quota-tokens", 0, "Token quota")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+
+	store, err := proxy.LoadKeyStore(*keysPath)
+	if err != nil {
+		return err
+	}
+
+	switch cmd {
+	case "add":
+		rec, secret, err := store.Add(*label, *rate, *burst, *quota)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("id=%s label=%s key=%s\n", rec.ID, rec.Label, secret)
+	case "list":
+		for _, rec := range store.List() {
+			revoked := ""
+			if rec.RevokedAt != nil {
+				revoked = rec.RevokedAt.Format(time.RFC3339)
+			}
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%d\t%d\n", rec.ID, rec.Label, rec.CreatedAt.Format(time.RFC3339), revoked, rec.Rate, rec.Burst, rec.QuotaTokens)
+		}
+	case "revoke":
+		if len(fs.Args()) == 0 {
+			return errors.New("revoke requires id or key")
+		}
+		if _, ok := store.Revoke(fs.Args()[0]); !ok {
+			return errors.New("key not found")
+		}
+		fmt.Println("revoked")
+	case "rotate":
+		if len(fs.Args()) == 0 {
+			return errors.New("rotate requires id or key")
+		}
+		rec, secret, err := store.Rotate(fs.Args()[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("id=%s label=%s key=%s\n", rec.ID, rec.Label, secret)
+	default:
+		return fmt.Errorf("unknown proxy keys command: %s", cmd)
+	}
+	return nil
+}
+
+func runProxyUsage(args []string) error {
+	if len(args) == 0 {
+		return errors.New("proxy usage requires a subcommand")
+	}
+	cmd := args[0]
+
+	fs := flag.NewFlagSet("proxy usage", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	statsPath := fs.String("stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", proxy.DefaultStatsPath()), "Usage JSONL path")
+	sinceStr := fs.String("since", "", "Lookback duration (e.g. 24h)")
+	keyID := fs.String("key", "", "Key id filter")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	var since time.Duration
+	if strings.TrimSpace(*sinceStr) != "" {
+		d, err := time.ParseDuration(*sinceStr)
+		if err != nil {
+			return err
+		}
+		since = d
+	}
+	if cmd == "show" {
+		if len(fs.Args()) == 0 && strings.TrimSpace(*keyID) == "" {
+			return errors.New("show requires --key or id")
+		}
+		if strings.TrimSpace(*keyID) == "" {
+			*keyID = fs.Args()[0]
+		}
+	}
+	events, err := proxy.ReadUsage(*statsPath, since, *keyID)
+	if err != nil {
+		return err
+	}
+	if cmd == "list" {
+		sums := proxy.SummarizeUsage(events)
+		for _, s := range sums {
+			fmt.Printf("%s\t%s\t%d\t%d\t%s\n", s.KeyID, s.Label, s.Requests, s.TotalTokens, s.LastSeen.Format(time.RFC3339))
+		}
+		return nil
+	}
+	if cmd == "show" {
+		sums := proxy.SummarizeUsage(events)
+		if len(sums) == 0 {
+			fmt.Println("no usage")
+			return nil
+		}
+		s := sums[0]
+		fmt.Printf("key=%s label=%s requests=%d total_tokens=%d last_seen=%s\n", s.KeyID, s.Label, s.Requests, s.TotalTokens, s.LastSeen.Format(time.RFC3339))
+		return nil
+	}
+	return fmt.Errorf("unknown proxy usage command: %s", cmd)
 }
 
 func envOrDefault(key, fallback string) string {
@@ -536,7 +675,34 @@ func envBool(key string) bool {
 	return val == "1" || val == "true" || val == "yes"
 }
 
+func envInt(key string, fallback int) int {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	out, err := strconv.Atoi(val)
+	if err != nil {
+		return fallback
+	}
+	return out
+}
+
+func envInt64(key string, fallback int64) int64 {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	out, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return out
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: godex exec --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
 	fmt.Fprintln(os.Stderr, "       godex proxy --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
+	fmt.Fprintln(os.Stderr, "       godex proxy keys add --label <label> [--rate 60/m] [--burst 10] [--quota-tokens N]")
+	fmt.Fprintln(os.Stderr, "       godex proxy keys list | revoke <id|key> | rotate <id|key>")
+	fmt.Fprintln(os.Stderr, "       godex proxy usage list [--since 24h] [--key <id>] | show <id>")
 }

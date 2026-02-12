@@ -16,7 +16,11 @@ type chatCallInfo struct {
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAuth(w, r) {
+	key, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowRequest(w, r, key) {
 		return
 	}
 	var req OpenAIChatRequest
@@ -65,6 +69,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		s.cache.SaveToolCalls(sessionKey, toolCallsFromResult(result))
 		resp := chatResponseFromResult(req.Model, result)
 		writeJSON(w, http.StatusOK, resp)
+		s.recordUsage(r, key, http.StatusOK, nil)
 		return
 	}
 
@@ -85,8 +90,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	sentRole := false
 	sawTool := false
 
+	var usage *protocol.Usage
 	err = cl.StreamResponses(r.Context(), codexReq, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
+		if ev.Value.Response != nil && ev.Value.Response.Usage != nil {
+			usage = ev.Value.Response.Usage
+		}
 		switch ev.Value.Type {
 		case "response.output_text.delta":
 			if ev.Value.Delta == "" {
@@ -217,6 +226,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	_ = writeSSE(w, flusher, finalChunk)
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
+	s.recordUsage(r, key, http.StatusOK, usage)
 }
 
 func chatResponseFromResult(model string, result client.StreamResult) OpenAIChatResponse {
