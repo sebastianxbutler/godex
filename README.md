@@ -91,4 +91,4 @@ chmod +x godex
 - `examples/web-search`
 
 ## License
-Private repository.
+MIT. See `LICENSE`.
