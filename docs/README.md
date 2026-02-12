@@ -1,4 +1,13 @@
 # Docs
 
-- `intelliwire.md` — Intelliwire Spec (v0).
-- `proxy.md` — Godex proxy setup and OpenAI-compatible API details.
+## Manual
+- `manual/index.md` — start here
+- `manual/cli.md` — CLI usage
+- `manual/logging.md` — logging & observability
+- `manual/testing.md` — testing & mock modes
+- `manual/debugging.md` — debugging guide
+- `manual/glossary.md` — glossary
+
+## Specs
+- `intelliwire.md` — Intelliwire Spec (v0)
+- `proxy.md` — OpenAI-compatible proxy details

@@ -1,20 +1,26 @@
 # godex
 
-Minimal Go client for Codex (ChatGPT backend) Responses API with tool calls and an
-OpenAI-compatible proxy server.
+**Minimal Go client for the Codex (ChatGPT backend) Responses API.**
 
-## Docs
-- `protocol-spec.md`
-- `sdk-outline.md`
-- `docs/proxy.md`
+Godex is designed to be small, reliable, and easy to embed in larger systems. It supports:
+- streaming SSE responses
+- tool calls + tool loops
+- deterministic JSONL output
+- an OpenAI‑compatible proxy
+- Intelliwire flags for multi‑provider compatibility
 
-## CLI usage
+If you want a pragmatic, inspectable client for the Responses API, this is it.
+
+---
+
+## Quick Start
+
 ```bash
 # Simple prompt
 ./godex exec --prompt "Hello"
 
 # Enable web_search tool
-./godex exec --prompt "What is the weather in Austin, TX?" --web-search
+./godex exec --prompt "Weather in Austin" --web-search
 
 # Provide a function tool schema
 ./godex exec --prompt "Call add(a=2,b=3)" --tool add:json=schemas/add.json
@@ -23,35 +29,57 @@ OpenAI-compatible proxy server.
 ./godex exec --prompt "Call add(a=2,b=3)" \
   --tool add:json=schemas/add.json \
   --auto-tools --tool-output add=5
-
-# Echo tool args back
-./godex exec --prompt "Call add(a=2,b=3)" \
-  --tool add:json=schemas/add.json \
-  --auto-tools --tool-output add=$args
-
-# OpenClaw compatibility flags (accepted)
-./godex exec --prompt "Hello" --model gpt-5.2-codex \
-  --instructions "System prompt here" \
-  --append-system-prompt "Extra system notes" \
-  --session-id "optional-session-id" \
-  --image /path/to/image.png
-
-# Run the OpenAI-compatible proxy
-./godex proxy --api-key "local-dev-key"
-
-# Proxy with logging + allow any key
-./godex proxy --allow-any-key --log-requests --log-level debug
-
-# Proxy with a custom auth file
-./godex proxy --api-key "local-dev-key" --auth-path /path/to/auth.json
 ```
 
-## Examples
-- `examples/basic` — minimal request
-- `examples/tool-loop` — tool call + follow‑up
-- `examples/web-search` — web_search tool
+## Why godex
+- **Minimal:** no heavy SDK dependency, pure Go.
+- **Transparent:** JSONL streaming output for easy inspection.
+- **Tool‑ready:** native tool calls, tool loop helpers, strict output schema.
+- **Testable:** mock modes + request/response logs.
+- **Compatible:** Intelliwire flags + OpenAI‑compatible proxy.
 
-## Test harnesses
-- `test_request.py`
-- `test_web_search.py`
-- `edge_cases.py`
+## Install
+
+```bash
+go build ./cmd/godex
+```
+
+## Usage
+
+### Exec
+```bash
+./godex exec --prompt "Hello" --json
+```
+
+### Proxy
+```bash
+./godex proxy --api-key "local-dev-key"
+```
+
+## Logging
+
+```bash
+./godex exec --prompt "Hello" \
+  --log-requests /tmp/godex-request.json \
+  --log-responses /tmp/godex-response.jsonl
+```
+
+## Testing
+
+```bash
+./godex exec --prompt "test" --mock --mock-mode tool-loop --json
+```
+
+## Docs
+
+- Manual: `docs/manual/index.md`
+- Intelliwire spec: `docs/intelliwire.md`
+- Proxy guide: `docs/proxy.md`
+
+## Examples
+- `examples/basic`
+- `examples/tool-loop`
+- `examples/web-search`
+
+## License
+Private repository.
