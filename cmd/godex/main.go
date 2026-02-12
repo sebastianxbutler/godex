@@ -559,6 +559,7 @@ func runProxyKeys(args []string) error {
 	fs.SetOutput(os.Stderr)
 	keysPath := fs.String("keys-path", envOrDefault("GODEX_PROXY_KEYS_PATH", proxy.DefaultKeysPath()), "API keys file")
 	label := fs.String("label", "", "Key label")
+	providedKey := fs.String("key", "", "Use a pre-generated API key (BYOK)")
 	rate := fs.String("rate", "60/m", "Rate limit")
 	burst := fs.Int("burst", 10, "Burst")
 	quota := fs.Int64("quota-tokens", 0, "Token quota")
@@ -573,7 +574,7 @@ func runProxyKeys(args []string) error {
 
 	switch cmd {
 	case "add":
-		rec, secret, err := store.Add(*label, *rate, *burst, *quota)
+		rec, secret, err := store.Add(*label, *rate, *burst, *quota, *providedKey)
 		if err != nil {
 			return err
 		}

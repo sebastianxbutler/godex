@@ -29,6 +29,9 @@ You can manage multiple keys via CLI:
 # Create a key
 ./godex proxy keys add --label "agent-a" --rate 60/m --burst 10
 
+# Bring your own key (BYOK)
+./godex proxy keys add --label "agent-x" --key "gxk_..."
+
 # List keys
 ./godex proxy keys list
 

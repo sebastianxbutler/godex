@@ -82,7 +82,7 @@ func (s *KeyStore) List() []KeyRecord {
 	return out
 }
 
-func (s *KeyStore) Add(label string, rate string, burst int, quota int64) (KeyRecord, string, error) {
+func (s *KeyStore) Add(label string, rate string, burst int, quota int64, providedKey string) (KeyRecord, string, error) {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return KeyRecord{}, "", errors.New("label is required")
@@ -91,9 +91,12 @@ func (s *KeyStore) Add(label string, rate string, burst int, quota int64) (KeyRe
 	if err != nil {
 		return KeyRecord{}, "", err
 	}
-	secret, err := newAPIKey()
-	if err != nil {
-		return KeyRecord{}, "", err
+	secret := strings.TrimSpace(providedKey)
+	if secret == "" {
+		secret, err = newAPIKey()
+		if err != nil {
+			return KeyRecord{}, "", err
+		}
 	}
 	rec := KeyRecord{
 		ID:          id,
@@ -138,7 +141,7 @@ func (s *KeyStore) Rotate(idOrToken string) (KeyRecord, string, error) {
 	if !ok {
 		return KeyRecord{}, "", errors.New("key not found")
 	}
-	return s.Add(rec.Label, rec.Rate, rec.Burst, rec.QuotaTokens)
+	return s.Add(rec.Label, rec.Rate, rec.Burst, rec.QuotaTokens, "")
 }
 
 func (s *KeyStore) Validate(token string) (KeyRecord, bool) {

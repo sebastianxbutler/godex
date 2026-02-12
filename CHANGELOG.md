@@ -9,6 +9,7 @@
 - Normalized JSONL error events and tool argument completion.
 - Added proxy API key management (keys, usage, rate limiting, token metering).
 - Added build-time version flag (--version).
+- Added BYOK support for proxy keys (--key).
 
 ## 0.2.0 - 2026-02-12
 - Add OpenAI-compatible proxy (`/v1/responses`, `/v1/models`, `/v1/chat/completions`)
