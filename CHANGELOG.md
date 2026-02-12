@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.3.2 - 2026-02-12
+- Added YAML config with env + CLI layering and config template.
+- Added --config flag for exec/proxy subcommands.
+- Added summary-only metering defaults and rolling reset-events log.
+
 ## 0.3.1 - 2026-02-12
 - Added release workflow + changelog-based release notes.
 
