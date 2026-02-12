@@ -7,7 +7,7 @@ Godex is designed to be small, reliable, and easy to embed in larger systems. It
 - tool calls + tool loops
 - deterministic JSONL output
 - an OpenAI‑compatible proxy
-- Intelliwire flags for multi‑provider compatibility
+- Wire flags for multi‑provider compatibility
 
 If you want a pragmatic, inspectable client for the Responses API, this is it.
 
@@ -36,7 +36,7 @@ If you want a pragmatic, inspectable client for the Responses API, this is it.
 - **Transparent:** JSONL streaming output for easy inspection.
 - **Tool‑ready:** native tool calls, tool loop helpers, strict output schema.
 - **Testable:** mock modes + request/response logs.
-- **Compatible:** Intelliwire flags + OpenAI‑compatible proxy.
+- **Compatible:** Wire flags + OpenAI‑compatible proxy.
 
 ## Install
 
@@ -73,7 +73,7 @@ go build ./cmd/godex
 ## Docs
 
 - Manual: `docs/manual/index.md`
-- Intelliwire spec: `docs/intelliwire.md`
+- Wire spec: `docs/wire.md`
 - Proxy guide: `docs/proxy.md`
 
 ## Examples

@@ -1,16 +1,15 @@
 # Docs
 
-## Manual
-- `manual/index.md` — start here
-- `manual/cli.md` — CLI usage
-- `manual/logging.md` — logging & observability
-- `manual/testing.md` — testing & mock modes
-- `manual/debugging.md` — debugging guide
-- `manual/architecture.md` — architecture overview
-- `manual/cookbook.md` — recipes
-- `manual/protocol.md` — protocol summary
-- `manual/glossary.md` — glossary
+## Docs
+- `index.md` — start here
+- `cli.md` — CLI usage
+- `logging.md` — logging & observability
+- `testing.md` — testing & mock modes
+- `debugging.md` — debugging guide
+- `architecture.md` — architecture overview
+- `cookbook.md` — recipes
+- `glossary.md` — glossary
 
 ## Specs
-- `intelliwire.md` — Intelliwire Spec (v0)
+- `wire.md` — wire protocol spec (v0)
 - `proxy.md` — OpenAI-compatible proxy details

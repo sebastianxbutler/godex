@@ -20,7 +20,7 @@ Godex exposes two primary commands:
 - `--tool <name:spec>` — add a tool schema (see below)
 - `--auto-tools` — run tool loop automatically
 - `--tool-output name=value` — provide tool outputs for auto loop
-- `--tool-choice <choice>` — enforce tool selection (Intelliwire)
+- `--tool-choice <choice>` — enforce tool selection (Wire)
 - `--input-json <file>` — full Responses input items JSON
 - `--json` — JSONL streaming output (for programmatic parsing)
 - `--mock` — enable mock mode
@@ -75,8 +75,8 @@ Useful flags:
 - `--log-requests` — write request logs
 - `--log-level <debug|info|warn|error>` — verbosity
 
-## Intelliwire compliance
-Godex supports Intelliwire flags for compatibility with multi‑provider runners:
+## Wire compliance
+Godex supports Wire flags for compatibility with multi‑provider runners:
 - `--tool-choice`, `--log-requests`, `--log-responses`, `--input-json`
 
-See `docs/intelliwire.md` for the full spec.
+See `docs/wire.md` for the full spec.

@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- Added Intelliwire spec (docs/intelliwire.md).
+- Added Wire spec (docs/wire.md).
 - Added exec flags: --tool-choice, --input-json, --log-requests/--log-responses.
 - Added mock modes: echo, text, tool-call, tool-loop.
 - Normalized JSONL error events and tool argument completion.
