@@ -19,6 +19,12 @@ Godex follows **Semantic Versioning**: `MAJOR.MINOR.PATCH`.
 - `CHANGELOG.md` (add entries under Unreleased)
 - `README.md` and `docs/` if behavior changed
 
+### Updating CHANGELOG.md
+- Add a new entry under **Unreleased** describing the change
+- Group related items together
+- Keep entries user‑facing (what changed, not how)
+- Before tagging: move Unreleased entries into a new version section
+
 3) **Pick the version bump**
 - Decide PATCH/MINOR/MAJOR using the rules above
 
