@@ -14,6 +14,7 @@ import (
 	"godex/pkg/auth"
 	"godex/pkg/client"
 	"godex/pkg/protocol"
+	"godex/pkg/proxy"
 	"godex/pkg/sse"
 )
 
@@ -44,6 +45,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
+	case "proxy":
+		if err := runProxy(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 	default:
 		usage()
 		os.Exit(2)
@@ -57,22 +63,32 @@ func runExec(args []string) error {
 	var prompt string
 	var model string
 	var instructions string
+	var instructionsAlt string
+	var appendSystemPrompt string
 	var trace bool
+	var jsonOnly bool
 	var allowRefresh bool
 	var autoTools bool
 	var webSearch bool
 	var tools toolFlags
 	var outputs outputFlags
+	var sessionID string
+	var images toolFlags
 
 	fs.StringVar(&prompt, "prompt", "", "User prompt")
 	fs.StringVar(&model, "model", "gpt-5.2-codex", "Model name")
 	fs.StringVar(&instructions, "instructions", "", "Optional system instructions")
+	fs.StringVar(&instructionsAlt, "system", "", "Alias for --instructions")
+	fs.StringVar(&appendSystemPrompt, "append-system-prompt", "", "Append to system instructions")
 	fs.BoolVar(&trace, "trace", false, "Print raw SSE event JSON")
+	fs.BoolVar(&jsonOnly, "json", false, "Emit JSON events only (no text output)")
 	fs.BoolVar(&allowRefresh, "allow-refresh", false, "Allow network token refresh on 401")
 	fs.BoolVar(&autoTools, "auto-tools", false, "Automatically run tool loop with static outputs")
 	fs.BoolVar(&webSearch, "web-search", false, "Enable web_search tool")
 	fs.Var(&tools, "tool", "Tool spec (repeatable): web_search or name:json=/path/schema.json")
 	fs.Var(&outputs, "tool-output", "Static tool output: name=value or name=$args (repeatable)")
+	fs.StringVar(&sessionID, "session-id", "", "Optional session id (reuses prompt cache key)")
+	fs.Var(&images, "image", "Image path (ignored; accepted for OpenClaw CLI compatibility)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -90,9 +106,11 @@ func runExec(args []string) error {
 		return err
 	}
 
-	sessionID, err := newSessionID()
-	if err != nil {
-		return err
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID, err = newSessionID()
+		if err != nil {
+			return err
+		}
 	}
 
 	toolSpecs, err := parseToolSpecs(tools)
@@ -103,8 +121,14 @@ func runExec(args []string) error {
 		toolSpecs = append(toolSpecs, protocol.ToolSpec{Type: "web_search", ExternalWebAccess: true})
 	}
 
+	if strings.TrimSpace(instructions) == "" && strings.TrimSpace(instructionsAlt) != "" {
+		instructions = instructionsAlt
+	}
 	if strings.TrimSpace(instructions) == "" {
 		instructions = "You are a helpful assistant."
+	}
+	if strings.TrimSpace(appendSystemPrompt) != "" {
+		instructions = strings.TrimSpace(instructions) + "\n\n" + strings.TrimSpace(appendSystemPrompt)
 	}
 
 	req := protocol.ResponsesRequest{
@@ -138,13 +162,19 @@ func runExec(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Print(result.Text)
+		if !jsonOnly {
+			fmt.Print(result.Text)
+		}
 		return nil
 	}
 
 	collector := sse.NewCollector()
 	return cl.StreamResponses(ctx, req, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
+		if jsonOnly {
+			fmt.Println(string(ev.Raw))
+			return nil
+		}
 		if trace {
 			fmt.Println(string(ev.Raw))
 		}
@@ -203,6 +233,85 @@ func newSessionID() (string, error) {
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
+func runProxy(args []string) error {
+	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var listen string
+	var apiKey string
+	var model string
+	var baseURL string
+	var originator string
+	var userAgent string
+	var allowRefresh bool
+	var allowAnyKey bool
+	var authPath string
+	var cacheTTL string
+	var logLevel string
+	var logRequests bool
+
+	fs.StringVar(&listen, "listen", envOrDefault("GODEX_PROXY_LISTEN", "127.0.0.1:39001"), "Listen address")
+	fs.StringVar(&apiKey, "api-key", os.Getenv("GODEX_PROXY_API_KEY"), "API key")
+	fs.StringVar(&model, "model", envOrDefault("GODEX_PROXY_MODEL", "gpt-5.2-codex"), "Model name")
+	fs.StringVar(&baseURL, "base-url", envOrDefault("GODEX_PROXY_BASE_URL", "https://chatgpt.com/backend-api/codex"), "Upstream base URL")
+	fs.StringVar(&originator, "originator", envOrDefault("GODEX_PROXY_ORIGINATOR", "codex_cli_rs"), "Originator header")
+	fs.StringVar(&userAgent, "user-agent", envOrDefault("GODEX_PROXY_USER_AGENT", "godex/0.0"), "User-Agent header")
+	fs.BoolVar(&allowRefresh, "allow-refresh", envBool("GODEX_PROXY_ALLOW_REFRESH"), "Allow network token refresh on 401")
+	fs.BoolVar(&allowAnyKey, "allow-any-key", envBool("GODEX_PROXY_ALLOW_ANY_KEY"), "Allow any bearer token")
+	fs.StringVar(&authPath, "auth-path", os.Getenv("GODEX_PROXY_AUTH_PATH"), "Auth file path (defaults to ~/.codex/auth.json)")
+	fs.StringVar(&cacheTTL, "cache-ttl", envOrDefault("GODEX_PROXY_CACHE_TTL", "6h"), "Prompt cache TTL")
+	fs.StringVar(&logLevel, "log-level", envOrDefault("GODEX_PROXY_LOG_LEVEL", "info"), "Log level (debug|info|warn|error)")
+	fs.BoolVar(&logRequests, "log-requests", envBool("GODEX_PROXY_LOG_REQUESTS"), "Log HTTP requests")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(apiKey) == "" && !allowAnyKey {
+		return fmt.Errorf("--api-key is required")
+	}
+	if strings.TrimSpace(cacheTTL) == "" {
+		cacheTTL = "6h"
+	}
+	ttl, err := time.ParseDuration(cacheTTL)
+	if err != nil {
+		return fmt.Errorf("invalid --cache-ttl: %w", err)
+	}
+
+	cfg := proxy.Config{
+		Listen:       listen,
+		APIKey:       apiKey,
+		Model:        model,
+		BaseURL:      baseURL,
+		AllowRefresh: allowRefresh,
+		AllowAnyKey:  allowAnyKey,
+		AuthPath:     authPath,
+		Originator:   originator,
+		UserAgent:    userAgent,
+		CacheTTL:     ttl,
+		LogLevel:     logLevel,
+		LogRequests:  logRequests,
+	}
+	return proxy.Run(cfg)
+}
+
+func envOrDefault(key, fallback string) string {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	return val
+}
+
+func envBool(key string) bool {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return false
+	}
+	val = strings.ToLower(val)
+	return val == "1" || val == "true" || val == "yes"
+}
+
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: godex exec --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--auto-tools --tool-output name=value] [--trace]")
+	fmt.Fprintln(os.Stderr, "usage: godex exec --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--auto-tools --tool-output name=value] [--trace] [--json]")
+	fmt.Fprintln(os.Stderr, "       godex proxy --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
 }

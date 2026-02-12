@@ -1,10 +1,12 @@
 # godex
 
-Minimal Go client for Codex (ChatGPT backend) Responses API with tool calls.
+Minimal Go client for Codex (ChatGPT backend) Responses API with tool calls and an
+OpenAI-compatible proxy server.
 
 ## Docs
 - `protocol-spec.md`
 - `sdk-outline.md`
+- `docs/proxy.md`
 
 ## CLI usage
 ```bash
@@ -26,6 +28,22 @@ Minimal Go client for Codex (ChatGPT backend) Responses API with tool calls.
 ./godex exec --prompt "Call add(a=2,b=3)" \
   --tool add:json=schemas/add.json \
   --auto-tools --tool-output add=$args
+
+# OpenClaw compatibility flags (accepted)
+./godex exec --prompt "Hello" --model gpt-5.2-codex \
+  --instructions "System prompt here" \
+  --append-system-prompt "Extra system notes" \
+  --session-id "optional-session-id" \
+  --image /path/to/image.png
+
+# Run the OpenAI-compatible proxy
+./godex proxy --api-key "local-dev-key"
+
+# Proxy with logging + allow any key
+./godex proxy --allow-any-key --log-requests --log-level debug
+
+# Proxy with a custom auth file
+./godex proxy --api-key "local-dev-key" --auth-path /path/to/auth.json
 ```
 
 ## Examples
