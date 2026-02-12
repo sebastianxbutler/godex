@@ -10,7 +10,7 @@
 
 **Input Items** — Structured inputs to Responses API: message, function_call, function_call_output.
 
-**Intelliwire** — CLI interface spec for provider‑agnostic tooling (Codex/Claude).
+**Wire protocol** — CLI interface spec for provider‑agnostic tooling (Codex/Claude).
 
 **Proxy** — OpenAI‑compatible HTTP server that forwards to Responses API.
 

@@ -1,4 +1,4 @@
-# Intelliwire Spec (v0)
+# Wire Protocol Spec (v0)
 
 This document defines the **stable binary interface** for `godex exec` so orchestrators (like Chrysalis) can integrate reliably without running a proxy.
 
