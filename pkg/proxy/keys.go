@@ -136,6 +136,38 @@ func (s *KeyStore) Revoke(idOrToken string) (KeyRecord, bool) {
 	return KeyRecord{}, false
 }
 
+func (s *KeyStore) Update(id string, label string, rate string, burst int, quota int64) (KeyRecord, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return KeyRecord{}, errors.New("id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, rec := range s.file.Keys {
+		if rec.ID != id {
+			continue
+		}
+		if strings.TrimSpace(label) != "" {
+			rec.Label = strings.TrimSpace(label)
+		}
+		if strings.TrimSpace(rate) != "" {
+			rec.Rate = strings.TrimSpace(rate)
+		}
+		if burst != 0 {
+			rec.Burst = burst
+		}
+		if quota != 0 {
+			rec.QuotaTokens = quota
+		}
+		s.file.Keys[i] = rec
+		if err := s.saveLocked(); err != nil {
+			return KeyRecord{}, err
+		}
+		return rec, nil
+	}
+	return KeyRecord{}, errors.New("key not found")
+}
+
 func (s *KeyStore) Rotate(idOrToken string) (KeyRecord, string, error) {
 	rec, ok := s.Revoke(idOrToken)
 	if !ok {

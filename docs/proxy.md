@@ -37,6 +37,7 @@ You can manage multiple keys via CLI:
 
 # Revoke or rotate
 ./godex proxy keys revoke key_abc123
+./godex proxy keys update key_abc123 --label "agent-new" --rate 30/m --burst 5 --quota-tokens 100000
 ./godex proxy keys rotate key_abc123
 ```
 

@@ -601,6 +601,15 @@ func runProxyKeys(args []string) error {
 			return errors.New("key not found")
 		}
 		fmt.Println("revoked")
+	case "update":
+		if len(fs.Args()) == 0 {
+			return errors.New("update requires id")
+		}
+		rec, err := store.Update(fs.Args()[0], *label, *rate, *burst, *quota)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("id=%s label=%s rate=%s burst=%d quota=%d\n", rec.ID, rec.Label, rec.Rate, rec.Burst, rec.QuotaTokens)
 	case "rotate":
 		if len(fs.Args()) == 0 {
 			return errors.New("rotate requires id or key")
