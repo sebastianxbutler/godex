@@ -84,6 +84,24 @@ Quota exceeded returns **429**.
 ./godex proxy usage show key_abc123
 ```
 
+## Multi‑agent setup (example)
+
+```bash
+# Create keys for two agents
+./godex proxy keys add --label "agent-a" --rate 60/m --burst 10
+./godex proxy keys add --label "agent-b" --rate 30/m --burst 5
+
+# Start proxy (local)
+./godex proxy --listen 127.0.0.1:39001 --allow-any-key=false
+```
+
+Agents then set their API keys when calling the proxy:
+
+```bash
+export OPENAI_API_KEY="gxk_..."
+export OPENAI_BASE_URL="http://127.0.0.1:39001/v1"
+```
+
 ## Proxy flags
 
 - `--listen` (default: `127.0.0.1:39001`)
