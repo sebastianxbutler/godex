@@ -40,8 +40,17 @@ If you want a pragmatic, inspectable client for the Responses API, this is it.
 
 ## Install
 
+### From source
 ```bash
 make build
+```
+
+### From GitHub Releases
+```bash
+# Example: download the latest Linux amd64 binary
+curl -L -o godex https://github.com/sebastianxbutler/godex/releases/latest/download/godex-linux-amd64
+chmod +x godex
+./godex --version
 ```
 
 ## Usage
