@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-02-12
+- Added release workflow + changelog-based release notes.
+
 ## 0.3.0 - 2026-02-12
 - Added wire protocol spec (docs/wire.md).
 - Added exec flags: --tool-choice, --input-json, --log-requests/--log-responses.
