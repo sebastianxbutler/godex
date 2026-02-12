@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"encoding/json"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -21,16 +22,21 @@ type UsageEvent struct {
 }
 
 type UsageStore struct {
-	path       string
-	maxBytes   int64
-	maxBackups int
-	window     time.Duration
-	mu         sync.Mutex
-	counts     map[string]int
+	path        string
+	maxBytes    int64
+	maxBackups  int
+	window      time.Duration
+	windowStart time.Time
+	mu          sync.Mutex
+	counts      map[string]int
 }
 
 func NewUsageStore(path string, maxBytes int64, maxBackups int, window time.Duration) *UsageStore {
-	return &UsageStore{path: path, maxBytes: maxBytes, maxBackups: maxBackups, window: window, counts: map[string]int{}}
+	store := &UsageStore{path: path, maxBytes: maxBytes, maxBackups: maxBackups, window: window, counts: map[string]int{}}
+	if window > 0 {
+		store.windowStart = time.Now().UTC().Truncate(window)
+	}
+	return store
 }
 
 func (u *UsageStore) Record(ev UsageEvent) {
@@ -44,6 +50,11 @@ func (u *UsageStore) Record(ev UsageEvent) {
 			_ = enc.Encode(ev)
 			_ = f.Close()
 		}
+	}
+	u.resetIfWindowElapsed(time.Now().UTC())
+	if ev.Path == "__reset__" {
+		u.counts[ev.KeyID] = 0
+		return
 	}
 	if ev.TotalTokens > 0 {
 		u.counts[ev.KeyID] += ev.TotalTokens
@@ -67,7 +78,25 @@ func (u *UsageStore) rotateIfNeeded() error {
 func (u *UsageStore) TotalTokens(keyID string) int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	u.resetIfWindowElapsed(time.Now().UTC())
 	return u.counts[keyID]
+}
+
+func (u *UsageStore) ResetKey(keyID string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.counts[keyID] = 0
+	if strings.TrimSpace(u.path) == "" {
+		return
+	}
+	_ = u.rotateIfNeeded()
+	f, err := os.OpenFile(u.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	_ = enc.Encode(UsageEvent{Timestamp: time.Now().UTC(), KeyID: keyID, Path: "__reset__", Status: http.StatusNoContent})
 }
 
 func (u *UsageStore) LoadFromFile() error {
@@ -78,10 +107,31 @@ func (u *UsageStore) LoadFromFile() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.counts = map[string]int{}
+	if u.window > 0 {
+		u.windowStart = time.Now().UTC().Truncate(u.window)
+	}
 	for _, ev := range events {
+		if ev.Path == "__reset__" {
+			u.counts[ev.KeyID] = 0
+			continue
+		}
 		u.counts[ev.KeyID] += ev.TotalTokens
 	}
 	return nil
+}
+
+func (u *UsageStore) resetIfWindowElapsed(now time.Time) {
+	if u.window <= 0 {
+		return
+	}
+	if u.windowStart.IsZero() {
+		u.windowStart = now.Truncate(u.window)
+		return
+	}
+	if now.Sub(u.windowStart) >= u.window {
+		u.counts = map[string]int{}
+		u.windowStart = now.Truncate(u.window)
+	}
 }
 
 type UsageSummary struct {

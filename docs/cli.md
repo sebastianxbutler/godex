@@ -97,6 +97,7 @@ Useful flags:
 - `--stats-path <file>` — usage JSONL path
 - `--stats-max-bytes <n>` — rotate stats after size
 - `--stats-max-backups <n>` — max rotated files
+- `--meter-window <dur>` — metering window (resets totals each window)
 - `--meter-window <duration>` — usage window (e.g., 24h)
 
 See `docs/proxy.md` for full proxy documentation.

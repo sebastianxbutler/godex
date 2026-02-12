@@ -86,6 +86,9 @@ Quota exceeded returns **429**.
 
 # Summary for one key
 ./godex proxy usage show key_abc123
+
+# Reset usage for a key
+./godex proxy usage reset key_abc123
 ```
 
 ## Multi‑agent setup (example)
@@ -125,9 +128,10 @@ export OPENAI_BASE_URL="http://127.0.0.1:39001/v1"
 - `--stats-path` (default: `~/.codex/proxy-usage.jsonl`)
 - `--stats-max-bytes` (default: `10485760`)
 - `--stats-max-backups` (default: `3`)
-- `--meter-window` (default: empty; counts since proxy start)
+- `--meter-window` (default: empty; disables windowed reset)
 
 The stats log rotates to `.1`, `.2`, ... when the size limit is exceeded.
+When `--meter-window` is set, totals reset at the end of each window.
 
 Metering totals are rebuilt on startup by scanning the usage log within the window.
 
@@ -150,6 +154,7 @@ Metering totals are rebuilt on startup by scanning the usage log within the wind
 - `GODEX_PROXY_STATS_PATH`
 - `GODEX_PROXY_STATS_MAX_BYTES`
 - `GODEX_PROXY_STATS_MAX_BACKUPS`
+- `GODEX_PROXY_METER_WINDOW`
 - `GODEX_PROXY_METER_WINDOW`
 
 ## Prompt cache reuse

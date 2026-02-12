@@ -657,9 +657,9 @@ func runProxyUsage(args []string) error {
 		}
 		since = d
 	}
-	if cmd == "show" {
+	if cmd == "show" || cmd == "reset" {
 		if len(fs.Args()) == 0 && strings.TrimSpace(*keyID) == "" {
-			return errors.New("show requires --key or id")
+			return fmt.Errorf("%s requires --key or id", cmd)
 		}
 		if strings.TrimSpace(*keyID) == "" {
 			*keyID = fs.Args()[0]
@@ -684,6 +684,18 @@ func runProxyUsage(args []string) error {
 		}
 		s := sums[0]
 		fmt.Printf("key=%s label=%s requests=%d total_tokens=%d last_seen=%s\n", s.KeyID, s.Label, s.Requests, s.TotalTokens, s.LastSeen.Format(time.RFC3339))
+		return nil
+	}
+	if cmd == "reset" {
+		if strings.TrimSpace(*keyID) == "" {
+			if len(fs.Args()) == 0 {
+				return errors.New("reset requires --key or id")
+			}
+			*keyID = fs.Args()[0]
+		}
+		store := proxy.NewUsageStore(*statsPath, 10*1024*1024, 3, 0)
+		store.ResetKey(*keyID)
+		fmt.Println("reset")
 		return nil
 	}
 	return fmt.Errorf("unknown proxy usage command: %s", cmd)

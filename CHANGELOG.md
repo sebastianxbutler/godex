@@ -15,6 +15,7 @@
 - Added BYOK support for proxy keys (--key).
 - Added stats log rotation for proxy usage logs.
 - Added proxy key update command (keys update).
+- Added persistent metering with windowed resets and usage reset command.
 - Added persistent metering with windowed totals.
 
 ## 0.2.0 - 2026-02-12
