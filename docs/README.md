@@ -6,6 +6,9 @@
 - `manual/logging.md` — logging & observability
 - `manual/testing.md` — testing & mock modes
 - `manual/debugging.md` — debugging guide
+- `manual/architecture.md` — architecture overview
+- `manual/cookbook.md` — recipes
+- `manual/protocol.md` — protocol summary
 - `manual/glossary.md` — glossary
 
 ## Specs

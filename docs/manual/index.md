@@ -32,6 +32,9 @@ Welcome to the Godex manual. Godex is a minimal Go client for the Codex (ChatGPT
 - **Logging & Observability:** `logging.md`
 - **Testing:** `testing.md`
 - **Debugging:** `debugging.md`
+- **Architecture:** `architecture.md`
+- **Cookbook:** `cookbook.md`
+- **Protocol:** `protocol.md`
 - **Glossary:** `glossary.md`
 
 ## Related docs
