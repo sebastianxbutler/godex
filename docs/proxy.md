@@ -1,8 +1,8 @@
 # Godex Proxy
 
-The Godex proxy exposes an OpenAI-compatible API and forwards requests to the Codex
+The Godex proxy exposes an OpenAI‑compatible API and forwards requests to the Codex
 Responses backend. It supports `/v1/responses`, `/v1/models`, and
-`/v1/chat/completions`, with SSE streaming, tool calls, and prompt cache suppression.
+`/v1/chat/completions`, with SSE streaming, tool calls, and prompt cache reuse.
 
 ## Endpoints
 
@@ -18,17 +18,73 @@ Responses backend. It supports `/v1/responses`, `/v1/models`, and
 ./godex proxy --api-key "local-dev-key"
 ```
 
-## Authentication
+## Authentication & API keys
 
 By default the proxy requires `Authorization: Bearer <api-key>`.
 
-To allow any bearer token (useful for local-only):
+### Managed keys
+You can manage multiple keys via CLI:
 
+```bash
+# Create a key
+./godex proxy keys add --label "agent-a" --rate 60/m --burst 10
+
+# List keys
+./godex proxy keys list
+
+# Revoke or rotate
+./godex proxy keys revoke key_abc123
+./godex proxy keys rotate key_abc123
+```
+
+Keys are stored hashed (no plaintext) in:
+- `~/.codex/proxy-keys.json` (or `--keys-path`)
+
+### Allow any key (dev only)
 ```bash
 ./godex proxy --allow-any-key
 ```
 
-## Flags
+## Rate limiting
+Per‑key rate limiting is enforced with defaults:
+- **60 requests/minute**, **burst 10**
+
+Override globally:
+```bash
+./godex proxy --rate 120/m --burst 20
+```
+
+Override per key on creation:
+```bash
+./godex proxy keys add --label "agent-b" --rate 30/m --burst 5
+```
+
+When exceeded, proxy returns **429** with `Retry-After`.
+
+## Token metering & quotas
+Godex records per‑key token usage from upstream Responses usage fields.
+
+- Usage log: `~/.codex/proxy-usage.jsonl` (or `--stats-path`)
+- Optional per‑key quotas: `--quota-tokens`
+
+Example:
+```bash
+./godex proxy keys add --label "agent-c" --quota-tokens 1000000
+```
+
+Quota exceeded returns **429**.
+
+## Usage reports
+
+```bash
+# Summary for all keys (last 24h)
+./godex proxy usage list --since 24h
+
+# Summary for one key
+./godex proxy usage show key_abc123
+```
+
+## Proxy flags
 
 - `--listen` (default: `127.0.0.1:39001`)
 - `--api-key` (required unless `--allow-any-key`)
@@ -40,6 +96,11 @@ To allow any bearer token (useful for local-only):
 - `--cache-ttl` (prompt cache TTL; default `6h`)
 - `--log-level` (`debug|info|warn|error`, default `info`)
 - `--log-requests` (emit per-request log lines)
+- `--keys-path` (default: `~/.codex/proxy-keys.json`)
+- `--rate` (default: `60/m`)
+- `--burst` (default: `10`)
+- `--quota-tokens` (default: `0` = disabled)
+- `--stats-path` (default: `~/.codex/proxy-usage.jsonl`)
 
 ## Environment variables
 
@@ -53,6 +114,11 @@ To allow any bearer token (useful for local-only):
 - `GODEX_PROXY_CACHE_TTL`
 - `GODEX_PROXY_LOG_LEVEL`
 - `GODEX_PROXY_LOG_REQUESTS`
+- `GODEX_PROXY_KEYS_PATH`
+- `GODEX_PROXY_RATE`
+- `GODEX_PROXY_BURST`
+- `GODEX_PROXY_QUOTA_TOKENS`
+- `GODEX_PROXY_STATS_PATH`
 
 ## Prompt cache reuse
 

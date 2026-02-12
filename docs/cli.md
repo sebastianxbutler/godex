@@ -68,12 +68,32 @@ Run an OpenAI‑compatible proxy that forwards to the Responses API.
 ./godex proxy --api-key "local-dev-key"
 ```
 
+Key management:
+```bash
+./godex proxy keys add --label "agent-a" --rate 60/m --burst 10
+./godex proxy keys list
+./godex proxy keys revoke key_abc123
+./godex proxy keys rotate key_abc123
+```
+
+Usage reporting:
+```bash
+./godex proxy usage list --since 24h
+./godex proxy usage show key_abc123
+```
+
 Useful flags:
 - `--listen :8080` — bind address
 - `--allow-any-key` — accept any incoming API key (dev only)
 - `--auth-path <file>` — override auth.json path
 - `--log-requests` — write request logs
 - `--log-level <debug|info|warn|error>` — verbosity
+- `--keys-path <file>` — key store path
+- `--rate <spec>` / `--burst <n>` — rate limits (default 60/m, burst 10)
+- `--quota-tokens <n>` — per‑key token quota
+- `--stats-path <file>` — usage JSONL path
+
+See `docs/proxy.md` for full proxy documentation.
 
 ## Wire compliance
 Godex supports Wire flags for compatibility with multi‑provider runners:
