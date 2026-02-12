@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Proxy no longer requires --api-key; key store is default (allow-any-key for dev).
 
 ## 0.3.2 - 2026-02-12
 - Added YAML config with env + CLI layering and config template.

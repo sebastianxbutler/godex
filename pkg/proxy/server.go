@@ -68,9 +68,7 @@ func Run(cfg Config) error {
 	if cfg.CacheTTL == 0 {
 		cfg.CacheTTL = 6 * time.Hour
 	}
-	if cfg.APIKey == "" && !cfg.AllowAnyKey {
-		return fmt.Errorf("api key is required")
-	}
+	// api-key optional when using key store; --allow-any-key bypasses auth entirely
 	if strings.TrimSpace(cfg.KeysPath) == "" {
 		cfg.KeysPath = DefaultKeysPath()
 	}
@@ -319,9 +317,7 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (*KeyRecord
 	if s.cfg.AllowAnyKey {
 		return &KeyRecord{ID: hashToken(token), Label: "anonymous"}, true
 	}
-	if s.cfg.APIKey != "" && token == s.cfg.APIKey {
-		return &KeyRecord{ID: "static", Label: "static"}, true
-	}
+	// static api_key disabled; use key store or --allow-any-key
 	if s.keys == nil {
 		writeError(w, http.StatusUnauthorized, errors.New("invalid bearer token"))
 		return nil, false

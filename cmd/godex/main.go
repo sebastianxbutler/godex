@@ -551,9 +551,7 @@ func runProxy(args []string) error {
 		return err
 	}
 	_ = configPath
-	if strings.TrimSpace(apiKey) == "" && !allowAnyKey {
-		return fmt.Errorf("--api-key is required")
-	}
+	// api-key optional when using key store; --allow-any-key bypasses auth entirely
 	if strings.TrimSpace(cacheTTL) == "" {
 		cacheTTL = "6h"
 	}
