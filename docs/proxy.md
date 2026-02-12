@@ -134,11 +134,15 @@ export OPENAI_BASE_URL="http://127.0.0.1:39001/v1"
 - `--stats-summary` (default: `~/.codex/proxy-usage.json`)
 - `--stats-max-bytes` (default: `10485760`)
 - `--stats-max-backups` (default: `3`)
+- `--events-path` (default: `~/.codex/proxy-events.jsonl`)
+- `--events-max-bytes` (default: `1048576`)
+- `--events-max-backups` (default: `3`)
 - `--meter-window` (default: empty; disables windowed reset)
 
 When `--stats-path` is set, JSONL history is written and rotated to `.1`, `.2`, ...
-The summary file always tracks totals. When `--meter-window` is set, totals reset
-at the end of each window.
+The summary file always tracks totals. Reset events are written to `--events-path`
+(using a rolling cache). When `--meter-window` is set, totals reset at the end of
+each window.
 
 Metering totals are rebuilt on startup by scanning the usage log within the window.
 
@@ -162,6 +166,9 @@ Metering totals are rebuilt on startup by scanning the usage log within the wind
 - `GODEX_PROXY_STATS_SUMMARY`
 - `GODEX_PROXY_STATS_MAX_BYTES`
 - `GODEX_PROXY_STATS_MAX_BACKUPS`
+- `GODEX_PROXY_EVENTS_PATH`
+- `GODEX_PROXY_EVENTS_MAX_BYTES`
+- `GODEX_PROXY_EVENTS_MAX_BACKUPS`
 - `GODEX_PROXY_METER_WINDOW`
 - `GODEX_PROXY_METER_WINDOW`
 

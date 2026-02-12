@@ -41,6 +41,9 @@ type Config struct {
 	StatsSummary    string
 	StatsMaxBytes   int64
 	StatsMaxBackups int
+	EventsPath      string
+	EventsMaxBytes  int64
+	EventsBackups   int
 	MeterWindow     time.Duration
 }
 
@@ -83,6 +86,15 @@ func Run(cfg Config) error {
 	if cfg.StatsMaxBackups == 0 {
 		cfg.StatsMaxBackups = 3
 	}
+	if strings.TrimSpace(cfg.EventsPath) == "" {
+		cfg.EventsPath = DefaultEventsPath()
+	}
+	if cfg.EventsMaxBytes == 0 {
+		cfg.EventsMaxBytes = 1024 * 1024
+	}
+	if cfg.EventsBackups == 0 {
+		cfg.EventsBackups = 3
+	}
 	if strings.TrimSpace(cfg.RateLimit) == "" {
 		cfg.RateLimit = "60/m"
 	}
@@ -115,7 +127,7 @@ func Run(cfg Config) error {
 		}
 	}
 
-	usage := NewUsageStore(cfg.StatsPath, cfg.StatsSummary, cfg.StatsMaxBytes, cfg.StatsMaxBackups, cfg.MeterWindow)
+	usage := NewUsageStore(cfg.StatsPath, cfg.StatsSummary, cfg.StatsMaxBytes, cfg.StatsMaxBackups, cfg.MeterWindow, cfg.EventsPath, cfg.EventsMaxBytes, cfg.EventsBackups)
 	_ = usage.LoadFromFile()
 	limiters := NewLimiterStore(cfg.RateLimit, cfg.Burst)
 

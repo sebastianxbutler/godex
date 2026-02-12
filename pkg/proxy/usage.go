@@ -22,26 +22,32 @@ type UsageEvent struct {
 }
 
 type UsageStore struct {
-	path        string
-	summaryPath string
-	maxBytes    int64
-	maxBackups  int
-	window      time.Duration
-	windowStart time.Time
-	mu          sync.Mutex
-	counts      map[string]int
-	lastSeen    map[string]time.Time
+	path           string
+	summaryPath    string
+	eventsPath     string
+	maxBytes       int64
+	maxBackups     int
+	eventsMaxBytes int64
+	eventsBackups  int
+	window         time.Duration
+	windowStart    time.Time
+	mu             sync.Mutex
+	counts         map[string]int
+	lastSeen       map[string]time.Time
 }
 
-func NewUsageStore(path string, summaryPath string, maxBytes int64, maxBackups int, window time.Duration) *UsageStore {
+func NewUsageStore(path string, summaryPath string, maxBytes int64, maxBackups int, window time.Duration, eventsPath string, eventsMaxBytes int64, eventsBackups int) *UsageStore {
 	store := &UsageStore{
-		path:        path,
-		summaryPath: summaryPath,
-		maxBytes:    maxBytes,
-		maxBackups:  maxBackups,
-		window:      window,
-		counts:      map[string]int{},
-		lastSeen:    map[string]time.Time{},
+		path:           path,
+		summaryPath:    summaryPath,
+		eventsPath:     eventsPath,
+		maxBytes:       maxBytes,
+		maxBackups:     maxBackups,
+		eventsMaxBytes: eventsMaxBytes,
+		eventsBackups:  eventsBackups,
+		window:         window,
+		counts:         map[string]int{},
+		lastSeen:       map[string]time.Time{},
 	}
 	if window > 0 {
 		store.windowStart = time.Now().UTC().Truncate(window)
@@ -63,9 +69,7 @@ func (u *UsageStore) Record(ev UsageEvent) {
 	}
 	u.resetIfWindowElapsed(time.Now().UTC())
 	if ev.Path == "__reset__" {
-		u.counts[ev.KeyID] = 0
-		u.lastSeen[ev.KeyID] = ev.Timestamp
-		u.persistSummaryLocked()
+		u.resetKeyInternal(ev.KeyID, "manual", ev.Timestamp)
 		return
 	}
 	if ev.TotalTokens > 0 {
@@ -101,9 +105,7 @@ func (u *UsageStore) TotalTokens(keyID string) int {
 func (u *UsageStore) ResetKey(keyID string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.counts[keyID] = 0
-	u.lastSeen[keyID] = time.Now().UTC()
-	u.persistSummaryLocked()
+	u.resetKeyInternal(keyID, "manual", time.Now().UTC())
 	if strings.TrimSpace(u.path) == "" {
 		return
 	}
@@ -134,8 +136,7 @@ func (u *UsageStore) LoadFromFile() error {
 	}
 	for _, ev := range events {
 		if ev.Path == "__reset__" {
-			u.counts[ev.KeyID] = 0
-			u.lastSeen[ev.KeyID] = ev.Timestamp
+			u.resetKeyInternal(ev.KeyID, "manual", ev.Timestamp)
 			continue
 		}
 		u.counts[ev.KeyID] += ev.TotalTokens
@@ -155,11 +156,54 @@ func (u *UsageStore) resetIfWindowElapsed(now time.Time) {
 		return
 	}
 	if now.Sub(u.windowStart) >= u.window {
+		for key := range u.counts {
+			u.resetKeyInternal(key, "window", now)
+		}
 		u.counts = map[string]int{}
 		u.lastSeen = map[string]time.Time{}
 		u.windowStart = now.Truncate(u.window)
 		u.persistSummaryLocked()
 	}
+}
+
+func (u *UsageStore) resetKeyInternal(keyID string, reason string, now time.Time) {
+	u.counts[keyID] = 0
+	u.lastSeen[keyID] = now
+	u.persistSummaryLocked()
+	u.emitEventLocked("reset", keyID, reason, now)
+}
+
+func (u *UsageStore) emitEventLocked(kind string, keyID string, reason string, now time.Time) {
+	if strings.TrimSpace(u.eventsPath) == "" {
+		return
+	}
+	_ = u.rotateEventsIfNeeded()
+	f, err := os.OpenFile(u.eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	_ = enc.Encode(map[string]any{
+		"ts":     now.Format(time.RFC3339),
+		"event":  kind,
+		"key_id": keyID,
+		"reason": reason,
+	})
+}
+
+func (u *UsageStore) rotateEventsIfNeeded() error {
+	if u.eventsMaxBytes <= 0 {
+		return nil
+	}
+	info, err := os.Stat(u.eventsPath)
+	if err != nil {
+		return nil
+	}
+	if info.Size() < u.eventsMaxBytes {
+		return nil
+	}
+	return rotateFile(u.eventsPath, u.eventsBackups)
 }
 
 func (u *UsageStore) persistSummaryLocked() error {

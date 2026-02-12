@@ -497,6 +497,9 @@ func runProxy(args []string) error {
 	var statsSummary string
 	var statsMaxBytes int64
 	var statsMaxBackups int
+	var eventsPath string
+	var eventsMaxBytes int64
+	var eventsBackups int
 	var meterWindow string
 
 	fs.StringVar(&listen, "listen", envOrDefault("GODEX_PROXY_LISTEN", "127.0.0.1:39001"), "Listen address")
@@ -519,6 +522,9 @@ func runProxy(args []string) error {
 	fs.StringVar(&statsSummary, "stats-summary", envOrDefault("GODEX_PROXY_STATS_SUMMARY", proxy.DefaultStatsSummaryPath()), "Usage summary JSON path")
 	fs.Int64Var(&statsMaxBytes, "stats-max-bytes", envInt64("GODEX_PROXY_STATS_MAX_BYTES", 10*1024*1024), "Max stats file size before rotation")
 	fs.IntVar(&statsMaxBackups, "stats-max-backups", envInt("GODEX_PROXY_STATS_MAX_BACKUPS", 3), "Max rotated stats files to keep")
+	fs.StringVar(&eventsPath, "events-path", envOrDefault("GODEX_PROXY_EVENTS_PATH", proxy.DefaultEventsPath()), "Proxy events JSONL path")
+	fs.Int64Var(&eventsMaxBytes, "events-max-bytes", envInt64("GODEX_PROXY_EVENTS_MAX_BYTES", 1024*1024), "Max events file size before rotation")
+	fs.IntVar(&eventsBackups, "events-max-backups", envInt("GODEX_PROXY_EVENTS_MAX_BACKUPS", 3), "Max rotated events files to keep")
 	fs.StringVar(&meterWindow, "meter-window", envOrDefault("GODEX_PROXY_METER_WINDOW", ""), "Metering window duration (e.g. 24h); empty disables window")
 
 	if err := fs.Parse(args); err != nil {
@@ -563,6 +569,9 @@ func runProxy(args []string) error {
 		StatsSummary:    statsSummary,
 		StatsMaxBytes:   statsMaxBytes,
 		StatsMaxBackups: statsMaxBackups,
+		EventsPath:      eventsPath,
+		EventsMaxBytes:  eventsMaxBytes,
+		EventsBackups:   eventsBackups,
 		MeterWindow:     window,
 	}
 	return proxy.Run(cfg)
@@ -717,7 +726,7 @@ func runProxyUsage(args []string) error {
 			}
 			*keyID = fs.Args()[0]
 		}
-		store := proxy.NewUsageStore(*statsPath, proxy.DefaultStatsSummaryPath(), 10*1024*1024, 3, 0)
+		store := proxy.NewUsageStore(*statsPath, proxy.DefaultStatsSummaryPath(), 10*1024*1024, 3, 0, proxy.DefaultEventsPath(), 1024*1024, 3)
 		store.ResetKey(*keyID)
 		fmt.Println("reset")
 		return nil

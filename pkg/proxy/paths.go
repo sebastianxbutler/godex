@@ -17,6 +17,10 @@ func DefaultStatsSummaryPath() string {
 	return filepath.Join(defaultCodexDir(), "proxy-usage.json")
 }
 
+func DefaultEventsPath() string {
+	return filepath.Join(defaultCodexDir(), "proxy-events.jsonl")
+}
+
 func defaultCodexDir() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(home, ".codex")

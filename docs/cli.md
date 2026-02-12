@@ -99,6 +99,9 @@ Useful flags:
 - `--stats-summary <file>` — usage totals summary file
 - `--stats-max-bytes <n>` — rotate history after size
 - `--stats-max-backups <n>` — max rotated history files
+- `--events-path <file>` — reset events JSONL file
+- `--events-max-bytes <n>` — rotate events after size
+- `--events-max-backups <n>` — max rotated events files
 - `--meter-window <dur>` — metering window (resets totals each window)
 - `--meter-window <duration>` — usage window (e.g., 24h)
 
