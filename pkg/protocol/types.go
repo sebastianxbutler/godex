@@ -74,10 +74,18 @@ type StreamEvent struct {
 	Part     *ContentPart `json:"part,omitempty"`
 	Delta    string       `json:"delta,omitempty"`
 	ItemID   string       `json:"item_id,omitempty"`
+	Message  string       `json:"message,omitempty"`
 }
 
 type ResponseRef struct {
-	ID string `json:"id,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+type Usage struct {
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
+	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
 type OutputItem struct {

@@ -70,10 +70,16 @@ func runExec(args []string) error {
 	var allowRefresh bool
 	var autoTools bool
 	var webSearch bool
+	var toolChoice string
+	var inputJSON string
+	var mock bool
+	var mockMode string
 	var tools toolFlags
 	var outputs outputFlags
 	var sessionID string
 	var images toolFlags
+	var logRequests string
+	var logResponses string
 
 	fs.StringVar(&prompt, "prompt", "", "User prompt")
 	fs.StringVar(&model, "model", "gpt-5.2-codex", "Model name")
@@ -85,16 +91,22 @@ func runExec(args []string) error {
 	fs.BoolVar(&allowRefresh, "allow-refresh", false, "Allow network token refresh on 401")
 	fs.BoolVar(&autoTools, "auto-tools", false, "Automatically run tool loop with static outputs")
 	fs.BoolVar(&webSearch, "web-search", false, "Enable web_search tool")
+	fs.StringVar(&toolChoice, "tool-choice", "", "Tool choice: auto|required|function:<name>")
+	fs.StringVar(&inputJSON, "input-json", "", "JSON array of response input items (overrides --prompt)")
+	fs.BoolVar(&mock, "mock", false, "Mock mode: no network, emit synthetic stream")
+	fs.StringVar(&mockMode, "mock-mode", "echo", "Mock mode: echo|text|tool-call|tool-loop")
 	fs.Var(&tools, "tool", "Tool spec (repeatable): web_search or name:json=/path/schema.json")
 	fs.Var(&outputs, "tool-output", "Static tool output: name=value or name=$args (repeatable)")
 	fs.StringVar(&sessionID, "session-id", "", "Optional session id (reuses prompt cache key)")
 	fs.Var(&images, "image", "Image path (ignored; accepted for OpenClaw CLI compatibility)")
+	fs.StringVar(&logRequests, "log-requests", "", "Write JSON request payload to file")
+	fs.StringVar(&logResponses, "log-responses", "", "Append JSONL response events to file")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if strings.TrimSpace(prompt) == "" {
-		return errors.New("--prompt is required")
+	if strings.TrimSpace(prompt) == "" && strings.TrimSpace(inputJSON) == "" {
+		return errors.New("--prompt is required unless --input-json is provided")
 	}
 
 	authPath, err := auth.DefaultPath()
@@ -131,17 +143,38 @@ func runExec(args []string) error {
 		instructions = strings.TrimSpace(instructions) + "\n\n" + strings.TrimSpace(appendSystemPrompt)
 	}
 
+	inputItems := []protocol.ResponseInputItem{protocol.UserMessage(prompt)}
+	if strings.TrimSpace(inputJSON) != "" {
+		buf, err := os.ReadFile(inputJSON)
+		if err != nil {
+			return fmt.Errorf("read input json: %w", err)
+		}
+		if err := json.Unmarshal(buf, &inputItems); err != nil {
+			return fmt.Errorf("parse input json: %w", err)
+		}
+	}
+
 	req := protocol.ResponsesRequest{
 		Model:             model,
 		Instructions:      instructions,
-		Input:             []protocol.ResponseInputItem{protocol.UserMessage(prompt)},
+		Input:             inputItems,
 		Tools:             toolSpecs,
-		ToolChoice:        "auto",
+		ToolChoice:        normalizeToolChoice(toolChoice),
 		ParallelToolCalls: false,
 		Store:             false,
 		Stream:            true,
 		Include:           []string{},
 		PromptCacheKey:    sessionID,
+	}
+
+	if logRequests != "" {
+		if payload, err := json.MarshalIndent(req, "", "  "); err == nil {
+			_ = os.WriteFile(logRequests, payload, 0o600)
+		}
+	}
+
+	if mock {
+		return emitMockStream(req, jsonOnly, logResponses, mockMode)
 	}
 
 	cl := client.New(nil, store, client.Config{
@@ -171,7 +204,36 @@ func runExec(args []string) error {
 	collector := sse.NewCollector()
 	return cl.StreamResponses(ctx, req, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
+		if logResponses != "" {
+			if f, err := os.OpenFile(logResponses, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+				_, _ = f.Write(append(ev.Raw, '\n'))
+				_ = f.Close()
+			}
+		}
 		if jsonOnly {
+			switch ev.Value.Type {
+			case "error":
+				message := extractErrorMessage(ev.Raw)
+				if message == "" {
+					message = "stream error"
+				}
+				payload := struct {
+					Type    string `json:"type"`
+					Message string `json:"message"`
+				}{Type: "error", Message: message}
+				buf, _ := json.Marshal(payload)
+				fmt.Println(string(buf))
+				return nil
+			case "response.output_item.done":
+				if ev.Value.Item != nil && ev.Value.Item.Type == "function_call" {
+					if ev.Value.Item.Arguments == "" {
+						ev.Value.Item.Arguments = collector.FunctionArgs(ev.Value.Item.CallID)
+					}
+					buf, _ := json.Marshal(ev.Value)
+					fmt.Println(string(buf))
+					return nil
+				}
+			}
 			fmt.Println(string(ev.Raw))
 			return nil
 		}
@@ -188,6 +250,169 @@ func runExec(args []string) error {
 		}
 		return nil
 	})
+}
+
+func extractErrorMessage(raw json.RawMessage) string {
+	var payload struct {
+		Message string `json:"message"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(payload.Message) != "" {
+		return payload.Message
+	}
+	if strings.TrimSpace(payload.Error.Message) != "" {
+		return payload.Error.Message
+	}
+	return ""
+}
+
+func normalizeToolChoice(choice string) string {
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return "auto"
+	}
+	return choice
+}
+
+func emitMockStream(req protocol.ResponsesRequest, jsonOnly bool, logResponses string, mode string) error {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == "" {
+		mode = "echo"
+	}
+
+	created := map[string]any{
+		"type": "response.created",
+		"response": map[string]any{
+			"id":     "mock-response",
+			"object": "response",
+			"status": "in_progress",
+		},
+	}
+	completed := map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "mock-response",
+			"object": "response",
+			"status": "completed",
+		},
+	}
+
+	chunks := []map[string]any{created}
+
+	switch mode {
+	case "text":
+		for _, piece := range splitText("mock response text", 800) {
+			chunks = append(chunks, map[string]any{
+				"type":  "response.output_text.delta",
+				"delta": piece,
+			})
+		}
+	case "tool-call":
+		chunks = append(chunks,
+			map[string]any{
+				"type": "response.output_item.added",
+				"item": map[string]any{
+					"id":      "fc_mock",
+					"type":    "function_call",
+					"call_id": "call_mock",
+					"name":    "mock_tool",
+				},
+			},
+			map[string]any{
+				"type":    "response.function_call_arguments.delta",
+				"item_id": "fc_mock",
+				"delta":   "{\"value\":42}",
+			},
+			map[string]any{
+				"type": "response.output_item.done",
+				"item": map[string]any{
+					"id":        "fc_mock",
+					"type":      "function_call",
+					"call_id":   "call_mock",
+					"name":      "mock_tool",
+					"arguments": "{\"value\":42}",
+				},
+			},
+		)
+	case "tool-loop":
+		chunks = append(chunks,
+			map[string]any{
+				"type": "response.output_item.added",
+				"item": map[string]any{
+					"id":      "fc_mock",
+					"type":    "function_call",
+					"call_id": "call_mock",
+					"name":    "mock_tool",
+				},
+			},
+			map[string]any{
+				"type":    "response.function_call_arguments.delta",
+				"item_id": "fc_mock",
+				"delta":   "{\"value\":42}",
+			},
+			map[string]any{
+				"type": "response.output_item.done",
+				"item": map[string]any{
+					"id":        "fc_mock",
+					"type":      "function_call",
+					"call_id":   "call_mock",
+					"name":      "mock_tool",
+					"arguments": "{\"value\":42}",
+				},
+			},
+			map[string]any{
+				"type":  "response.output_text.delta",
+				"delta": "mock tool result: ok",
+			},
+		)
+	default:
+		payload, _ := json.Marshal(req)
+		text := string(payload)
+		for _, piece := range splitText(text, 800) {
+			chunks = append(chunks, map[string]any{
+				"type":  "response.output_text.delta",
+				"delta": piece,
+			})
+		}
+	}
+
+	chunks = append(chunks, completed)
+
+	for _, ev := range chunks {
+		buf, _ := json.Marshal(ev)
+		if logResponses != "" {
+			if f, err := os.OpenFile(logResponses, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+				_, _ = f.Write(append(buf, '\n'))
+				_ = f.Close()
+			}
+		}
+		if jsonOnly {
+			fmt.Println(string(buf))
+		} else if ev["type"] == "response.output_text.delta" {
+			fmt.Print(ev["delta"].(string))
+		}
+	}
+	return nil
+}
+
+func splitText(text string, size int) []string {
+	if size <= 0 {
+		return []string{text}
+	}
+	var out []string
+	for len(text) > size {
+		out = append(out, text[:size])
+		text = text[size:]
+	}
+	if text != "" {
+		out = append(out, text)
+	}
+	return out
 }
 
 func parseToolSpecs(flags []string) ([]protocol.ToolSpec, error) {
@@ -312,6 +537,6 @@ func envBool(key string) bool {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: godex exec --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--auto-tools --tool-output name=value] [--trace] [--json]")
+	fmt.Fprintln(os.Stderr, "usage: godex exec --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
 	fmt.Fprintln(os.Stderr, "       godex proxy --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
 }
