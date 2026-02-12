@@ -494,6 +494,7 @@ func runProxy(args []string) error {
 	var burst int
 	var quotaTokens int64
 	var statsPath string
+	var statsSummary string
 	var statsMaxBytes int64
 	var statsMaxBackups int
 	var meterWindow string
@@ -514,7 +515,8 @@ func runProxy(args []string) error {
 	fs.StringVar(&rateLimit, "rate", envOrDefault("GODEX_PROXY_RATE", "60/m"), "Default rate limit (e.g. 60/m)")
 	fs.IntVar(&burst, "burst", envInt("GODEX_PROXY_BURST", 10), "Default rate burst")
 	fs.Int64Var(&quotaTokens, "quota-tokens", envInt64("GODEX_PROXY_QUOTA_TOKENS", 0), "Default token quota (0 = none)")
-	fs.StringVar(&statsPath, "stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", proxy.DefaultStatsPath()), "Usage stats JSONL path")
+	fs.StringVar(&statsPath, "stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", ""), "Usage stats JSONL path (empty disables history)")
+	fs.StringVar(&statsSummary, "stats-summary", envOrDefault("GODEX_PROXY_STATS_SUMMARY", proxy.DefaultStatsSummaryPath()), "Usage summary JSON path")
 	fs.Int64Var(&statsMaxBytes, "stats-max-bytes", envInt64("GODEX_PROXY_STATS_MAX_BYTES", 10*1024*1024), "Max stats file size before rotation")
 	fs.IntVar(&statsMaxBackups, "stats-max-backups", envInt("GODEX_PROXY_STATS_MAX_BACKUPS", 3), "Max rotated stats files to keep")
 	fs.StringVar(&meterWindow, "meter-window", envOrDefault("GODEX_PROXY_METER_WINDOW", ""), "Metering window duration (e.g. 24h); empty disables window")
@@ -558,6 +560,7 @@ func runProxy(args []string) error {
 		Burst:           burst,
 		QuotaTokens:     quotaTokens,
 		StatsPath:       statsPath,
+		StatsSummary:    statsSummary,
 		StatsMaxBytes:   statsMaxBytes,
 		StatsMaxBackups: statsMaxBackups,
 		MeterWindow:     window,
@@ -714,7 +717,7 @@ func runProxyUsage(args []string) error {
 			}
 			*keyID = fs.Args()[0]
 		}
-		store := proxy.NewUsageStore(*statsPath, 10*1024*1024, 3, 0)
+		store := proxy.NewUsageStore(*statsPath, proxy.DefaultStatsSummaryPath(), 10*1024*1024, 3, 0)
 		store.ResetKey(*keyID)
 		fmt.Println("reset")
 		return nil

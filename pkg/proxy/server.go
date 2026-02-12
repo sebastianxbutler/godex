@@ -38,6 +38,7 @@ type Config struct {
 	Burst           int
 	QuotaTokens     int64
 	StatsPath       string
+	StatsSummary    string
 	StatsMaxBytes   int64
 	StatsMaxBackups int
 	MeterWindow     time.Duration
@@ -71,7 +72,10 @@ func Run(cfg Config) error {
 		cfg.KeysPath = DefaultKeysPath()
 	}
 	if strings.TrimSpace(cfg.StatsPath) == "" {
-		cfg.StatsPath = DefaultStatsPath()
+		cfg.StatsPath = ""
+	}
+	if strings.TrimSpace(cfg.StatsSummary) == "" {
+		cfg.StatsSummary = DefaultStatsSummaryPath()
 	}
 	if cfg.StatsMaxBytes == 0 {
 		cfg.StatsMaxBytes = 10 * 1024 * 1024
@@ -111,7 +115,7 @@ func Run(cfg Config) error {
 		}
 	}
 
-	usage := NewUsageStore(cfg.StatsPath, cfg.StatsMaxBytes, cfg.StatsMaxBackups, cfg.MeterWindow)
+	usage := NewUsageStore(cfg.StatsPath, cfg.StatsSummary, cfg.StatsMaxBytes, cfg.StatsMaxBackups, cfg.MeterWindow)
 	_ = usage.LoadFromFile()
 	limiters := NewLimiterStore(cfg.RateLimit, cfg.Burst)
 

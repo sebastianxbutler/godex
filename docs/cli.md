@@ -95,9 +95,10 @@ Useful flags:
 - `--keys-path <file>` — key store path
 - `--rate <spec>` / `--burst <n>` — rate limits (default 60/m, burst 10)
 - `--quota-tokens <n>` — per‑key token quota
-- `--stats-path <file>` — usage JSONL path
-- `--stats-max-bytes <n>` — rotate stats after size
-- `--stats-max-backups <n>` — max rotated files
+- `--stats-path <file>` — usage JSONL history (empty disables)
+- `--stats-summary <file>` — usage totals summary file
+- `--stats-max-bytes <n>` — rotate history after size
+- `--stats-max-backups <n>` — max rotated history files
 - `--meter-window <dur>` — metering window (resets totals each window)
 - `--meter-window <duration>` — usage window (e.g., 24h)
 

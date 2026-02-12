@@ -17,6 +17,7 @@
 - Added proxy key update command (keys update).
 - Added persistent metering with windowed resets and usage reset command.
 - Added key expiration with pruning on restart.
+- Disabled history by default; added summary totals file for usage.
 - Added persistent metering with windowed totals.
 
 ## 0.2.0 - 2026-02-12

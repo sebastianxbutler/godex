@@ -23,16 +23,26 @@ type UsageEvent struct {
 
 type UsageStore struct {
 	path        string
+	summaryPath string
 	maxBytes    int64
 	maxBackups  int
 	window      time.Duration
 	windowStart time.Time
 	mu          sync.Mutex
 	counts      map[string]int
+	lastSeen    map[string]time.Time
 }
 
-func NewUsageStore(path string, maxBytes int64, maxBackups int, window time.Duration) *UsageStore {
-	store := &UsageStore{path: path, maxBytes: maxBytes, maxBackups: maxBackups, window: window, counts: map[string]int{}}
+func NewUsageStore(path string, summaryPath string, maxBytes int64, maxBackups int, window time.Duration) *UsageStore {
+	store := &UsageStore{
+		path:        path,
+		summaryPath: summaryPath,
+		maxBytes:    maxBytes,
+		maxBackups:  maxBackups,
+		window:      window,
+		counts:      map[string]int{},
+		lastSeen:    map[string]time.Time{},
+	}
 	if window > 0 {
 		store.windowStart = time.Now().UTC().Truncate(window)
 	}
@@ -54,11 +64,17 @@ func (u *UsageStore) Record(ev UsageEvent) {
 	u.resetIfWindowElapsed(time.Now().UTC())
 	if ev.Path == "__reset__" {
 		u.counts[ev.KeyID] = 0
+		u.lastSeen[ev.KeyID] = ev.Timestamp
+		u.persistSummaryLocked()
 		return
 	}
 	if ev.TotalTokens > 0 {
 		u.counts[ev.KeyID] += ev.TotalTokens
 	}
+	if !ev.Timestamp.IsZero() {
+		u.lastSeen[ev.KeyID] = ev.Timestamp
+	}
+	u.persistSummaryLocked()
 }
 
 func (u *UsageStore) rotateIfNeeded() error {
@@ -86,6 +102,8 @@ func (u *UsageStore) ResetKey(keyID string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.counts[keyID] = 0
+	u.lastSeen[keyID] = time.Now().UTC()
+	u.persistSummaryLocked()
 	if strings.TrimSpace(u.path) == "" {
 		return
 	}
@@ -100,6 +118,9 @@ func (u *UsageStore) ResetKey(keyID string) {
 }
 
 func (u *UsageStore) LoadFromFile() error {
+	if strings.TrimSpace(u.path) == "" {
+		return u.loadSummary()
+	}
 	events, err := ReadUsage(u.path, u.window, "")
 	if err != nil {
 		return err
@@ -107,17 +128,22 @@ func (u *UsageStore) LoadFromFile() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.counts = map[string]int{}
+	u.lastSeen = map[string]time.Time{}
 	if u.window > 0 {
 		u.windowStart = time.Now().UTC().Truncate(u.window)
 	}
 	for _, ev := range events {
 		if ev.Path == "__reset__" {
 			u.counts[ev.KeyID] = 0
+			u.lastSeen[ev.KeyID] = ev.Timestamp
 			continue
 		}
 		u.counts[ev.KeyID] += ev.TotalTokens
+		if ev.Timestamp.After(u.lastSeen[ev.KeyID]) {
+			u.lastSeen[ev.KeyID] = ev.Timestamp
+		}
 	}
-	return nil
+	return u.persistSummaryLocked()
 }
 
 func (u *UsageStore) resetIfWindowElapsed(now time.Time) {
@@ -130,8 +156,66 @@ func (u *UsageStore) resetIfWindowElapsed(now time.Time) {
 	}
 	if now.Sub(u.windowStart) >= u.window {
 		u.counts = map[string]int{}
+		u.lastSeen = map[string]time.Time{}
 		u.windowStart = now.Truncate(u.window)
+		u.persistSummaryLocked()
 	}
+}
+
+func (u *UsageStore) persistSummaryLocked() error {
+	if strings.TrimSpace(u.summaryPath) == "" {
+		return nil
+	}
+	summary := map[string]any{"updated_at": time.Now().UTC().Format(time.RFC3339), "totals": map[string]any{}}
+	vals := map[string]any{}
+	for key, total := range u.counts {
+		entry := map[string]any{"total_tokens": total}
+		if last := u.lastSeen[key]; !last.IsZero() {
+			entry["last_seen"] = last.Format(time.RFC3339)
+		}
+		vals[key] = entry
+	}
+	summary["totals"] = vals
+	buf, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(u.summaryPath, buf, 0o600)
+}
+
+func (u *UsageStore) loadSummary() error {
+	if strings.TrimSpace(u.summaryPath) == "" {
+		return nil
+	}
+	buf, err := os.ReadFile(u.summaryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var payload struct {
+		Totals map[string]struct {
+			TotalTokens int    `json:"total_tokens"`
+			LastSeen    string `json:"last_seen"`
+		} `json:"totals"`
+	}
+	if err := json.Unmarshal(buf, &payload); err != nil {
+		return err
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.counts = map[string]int{}
+	u.lastSeen = map[string]time.Time{}
+	for key, entry := range payload.Totals {
+		u.counts[key] = entry.TotalTokens
+		if entry.LastSeen != "" {
+			if ts, err := time.Parse(time.RFC3339, entry.LastSeen); err == nil {
+				u.lastSeen[key] = ts
+			}
+		}
+	}
+	return nil
 }
 
 type UsageSummary struct {
