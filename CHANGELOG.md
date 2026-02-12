@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+
+## 0.3.3 - 2026-02-12
 - Proxy no longer requires --api-key; key store is default (allow-any-key for dev).
 
 ## 0.3.2 - 2026-02-12
