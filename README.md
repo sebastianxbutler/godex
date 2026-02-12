@@ -81,7 +81,7 @@ chmod +x godex
 
 ## Docs
 
-- Manual: `docs/manual/index.md`
+- Config template: `docs/config.template.yaml`
 - Wire spec: `docs/wire.md`
 - Proxy guide: `docs/proxy.md`
 

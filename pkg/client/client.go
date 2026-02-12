@@ -23,6 +23,8 @@ type Config struct {
 	UserAgent    string
 	SessionID    string
 	AllowRefresh bool
+	RetryMax     int
+	RetryDelay   time.Duration
 }
 
 type Client struct {
@@ -43,6 +45,12 @@ func New(httpClient *http.Client, authStore *auth.Store, cfg Config) *Client {
 	}
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = "codex_cli_rs/0.0"
+	}
+	if cfg.RetryMax <= 0 {
+		cfg.RetryMax = 1
+	}
+	if cfg.RetryDelay == 0 {
+		cfg.RetryDelay = 300 * time.Millisecond
 	}
 	return &Client{httpClient: httpClient, auth: authStore, cfg: cfg}
 }
@@ -75,7 +83,7 @@ func (c *Client) StreamResponses(ctx context.Context, req protocol.ResponsesRequ
 			}
 			return fmt.Errorf("request failed with status 401")
 		}
-		if isRetryable(resp.StatusCode) && retried < 1 {
+		if isRetryable(resp.StatusCode) && retried < c.cfg.RetryMax {
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 			delay := c.retryDelay(retried + 1)
@@ -139,5 +147,5 @@ func (c *Client) retryDelay(attempt int) time.Duration {
 	if attempt <= 0 {
 		return 0
 	}
-	return time.Duration(attempt) * 300 * time.Millisecond
+	return time.Duration(attempt) * c.cfg.RetryDelay
 }

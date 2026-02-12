@@ -16,7 +16,9 @@ import (
 const (
 	ModeChatGPT = "chatgpt"
 	ModeAPIKey  = "api_key"
+)
 
+var (
 	refreshURL      = "https://auth.openai.com/oauth/token"
 	refreshClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 	refreshScope    = "openid profile email"
@@ -80,6 +82,18 @@ type Store struct {
 type RefreshOptions struct {
 	AllowNetwork bool
 	HTTPClient   *http.Client
+}
+
+func SetRefreshConfig(url, clientID, scope string) {
+	if strings.TrimSpace(url) != "" {
+		refreshURL = strings.TrimSpace(url)
+	}
+	if strings.TrimSpace(clientID) != "" {
+		refreshClientID = strings.TrimSpace(clientID)
+	}
+	if strings.TrimSpace(scope) != "" {
+		refreshScope = strings.TrimSpace(scope)
+	}
 }
 
 func DefaultPath() (string, error) {

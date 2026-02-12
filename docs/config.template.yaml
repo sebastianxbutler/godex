@@ -1,0 +1,58 @@
+# Godex configuration template (YAML)
+# Copy to ~/.config/godex/config.yaml or set GODEX_CONFIG
+
+exec:
+  model: gpt-5.2-codex
+  instructions: "You are a helpful assistant."
+  append_system_prompt: ""
+  tool_choice: auto
+  timeout: 90s
+  allow_refresh: false
+  auto_tools: false
+  auto_tools_max_steps: 4
+  mock: false
+  mock_mode: echo
+  web_search: false
+
+client:
+  base_url: https://chatgpt.com/backend-api/codex
+  originator: codex_cli_rs
+  user_agent: codex_cli_rs/0.0
+  retry_max: 1
+  retry_delay: 300ms
+
+auth:
+  path: "" # default: ~/.codex/auth.json
+  refresh_url: https://auth.openai.com/oauth/token
+  client_id: app_EMoamEEZ73f0CkXaXp7hrann
+  scope: "openid profile email"
+
+proxy:
+  listen: 127.0.0.1:39001
+  api_key: ""
+  allow_any_key: false
+  allow_refresh: false
+  model: gpt-5.2-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  originator: codex_cli_rs
+  user_agent: godex/0.0
+  auth_path: "" # default: ~/.codex/auth.json
+  cache_ttl: 6h
+  log_level: info
+  log_requests: false
+
+  keys_path: "" # default: ~/.codex/proxy-keys.json
+  default_rate: 60/m
+  default_burst: 10
+  default_quota_tokens: 0
+
+  stats_path: "" # empty disables history
+  stats_summary: "" # default: ~/.codex/proxy-usage.json
+  stats_max_bytes: 10MB
+  stats_max_backups: 3
+
+  events_path: "" # default: ~/.codex/proxy-events.jsonl
+  events_max_bytes: 1MB
+  events_max_backups: 3
+
+  meter_window: "" # empty disables windowed reset

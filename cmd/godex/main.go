@@ -14,6 +14,7 @@ import (
 
 	"godex/pkg/auth"
 	"godex/pkg/client"
+	"godex/pkg/config"
 	"godex/pkg/protocol"
 	"godex/pkg/proxy"
 	"godex/pkg/sse"
@@ -66,6 +67,8 @@ func runExec(args []string) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
+	cfg := config.Load()
+
 	var prompt string
 	var model string
 	var instructions string
@@ -88,19 +91,19 @@ func runExec(args []string) error {
 	var logResponses string
 
 	fs.StringVar(&prompt, "prompt", "", "User prompt")
-	fs.StringVar(&model, "model", "gpt-5.2-codex", "Model name")
-	fs.StringVar(&instructions, "instructions", "", "Optional system instructions")
+	fs.StringVar(&model, "model", cfg.Exec.Model, "Model name")
+	fs.StringVar(&instructions, "instructions", cfg.Exec.Instructions, "Optional system instructions")
 	fs.StringVar(&instructionsAlt, "system", "", "Alias for --instructions")
-	fs.StringVar(&appendSystemPrompt, "append-system-prompt", "", "Append to system instructions")
+	fs.StringVar(&appendSystemPrompt, "append-system-prompt", cfg.Exec.AppendSystem, "Append to system instructions")
 	fs.BoolVar(&trace, "trace", false, "Print raw SSE event JSON")
 	fs.BoolVar(&jsonOnly, "json", false, "Emit JSON events only (no text output)")
-	fs.BoolVar(&allowRefresh, "allow-refresh", false, "Allow network token refresh on 401")
-	fs.BoolVar(&autoTools, "auto-tools", false, "Automatically run tool loop with static outputs")
-	fs.BoolVar(&webSearch, "web-search", false, "Enable web_search tool")
-	fs.StringVar(&toolChoice, "tool-choice", "", "Tool choice: auto|required|function:<name>")
+	fs.BoolVar(&allowRefresh, "allow-refresh", cfg.Exec.AllowRefresh, "Allow network token refresh on 401")
+	fs.BoolVar(&autoTools, "auto-tools", cfg.Exec.AutoToolsEnabled, "Automatically run tool loop with static outputs")
+	fs.BoolVar(&webSearch, "web-search", cfg.Exec.WebSearch, "Enable web_search tool")
+	fs.StringVar(&toolChoice, "tool-choice", cfg.Exec.ToolChoice, "Tool choice: auto|required|function:<name>")
 	fs.StringVar(&inputJSON, "input-json", "", "JSON array of response input items (overrides --prompt)")
-	fs.BoolVar(&mock, "mock", false, "Mock mode: no network, emit synthetic stream")
-	fs.StringVar(&mockMode, "mock-mode", "echo", "Mock mode: echo|text|tool-call|tool-loop")
+	fs.BoolVar(&mock, "mock", cfg.Exec.MockEnabled, "Mock mode: no network, emit synthetic stream")
+	fs.StringVar(&mockMode, "mock-mode", cfg.Exec.MockMode, "Mock mode: echo|text|tool-call|tool-loop")
 	fs.Var(&tools, "tool", "Tool spec (repeatable): web_search or name:json=/path/schema.json")
 	fs.Var(&outputs, "tool-output", "Static tool output: name=value or name=$args (repeatable)")
 	fs.StringVar(&sessionID, "session-id", "", "Optional session id (reuses prompt cache key)")
@@ -115,9 +118,16 @@ func runExec(args []string) error {
 		return errors.New("--prompt is required unless --input-json is provided")
 	}
 
-	authPath, err := auth.DefaultPath()
-	if err != nil {
-		return err
+	if cfg.Auth.RefreshURL != "" || cfg.Auth.ClientID != "" || cfg.Auth.Scope != "" {
+		auth.SetRefreshConfig(cfg.Auth.RefreshURL, cfg.Auth.ClientID, cfg.Auth.Scope)
+	}
+	authPath := cfg.Auth.Path
+	if strings.TrimSpace(authPath) == "" {
+		var err error
+		authPath, err = auth.DefaultPath()
+		if err != nil {
+			return err
+		}
 	}
 	store, err := auth.Load(authPath)
 	if err != nil {
@@ -186,9 +196,14 @@ func runExec(args []string) error {
 	cl := client.New(nil, store, client.Config{
 		SessionID:    sessionID,
 		AllowRefresh: allowRefresh,
+		BaseURL:      cfg.Client.BaseURL,
+		Originator:   cfg.Client.Originator,
+		UserAgent:    cfg.Client.UserAgent,
+		RetryMax:     cfg.Client.RetryMax,
+		RetryDelay:   cfg.Client.RetryDelay,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Exec.Timeout)
 	defer cancel()
 
 	if autoTools {
@@ -197,7 +212,7 @@ func runExec(args []string) error {
 			return err
 		}
 		handler := staticToolHandler{outputs: outputs}
-		result, err := cl.RunToolLoop(ctx, req, handler, client.ToolLoopOptions{MaxSteps: 4})
+		result, err := cl.RunToolLoop(ctx, req, handler, client.ToolLoopOptions{MaxSteps: cfg.Exec.AutoToolsMax})
 		if err != nil {
 			return err
 		}
@@ -477,6 +492,8 @@ func runProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
+	cfg := config.Load()
+
 	var listen string
 	var apiKey string
 	var model string
@@ -502,30 +519,30 @@ func runProxy(args []string) error {
 	var eventsBackups int
 	var meterWindow string
 
-	fs.StringVar(&listen, "listen", envOrDefault("GODEX_PROXY_LISTEN", "127.0.0.1:39001"), "Listen address")
-	fs.StringVar(&apiKey, "api-key", os.Getenv("GODEX_PROXY_API_KEY"), "API key")
-	fs.StringVar(&model, "model", envOrDefault("GODEX_PROXY_MODEL", "gpt-5.2-codex"), "Model name")
-	fs.StringVar(&baseURL, "base-url", envOrDefault("GODEX_PROXY_BASE_URL", "https://chatgpt.com/backend-api/codex"), "Upstream base URL")
-	fs.StringVar(&originator, "originator", envOrDefault("GODEX_PROXY_ORIGINATOR", "codex_cli_rs"), "Originator header")
-	fs.StringVar(&userAgent, "user-agent", envOrDefault("GODEX_PROXY_USER_AGENT", "godex/0.0"), "User-Agent header")
-	fs.BoolVar(&allowRefresh, "allow-refresh", envBool("GODEX_PROXY_ALLOW_REFRESH"), "Allow network token refresh on 401")
-	fs.BoolVar(&allowAnyKey, "allow-any-key", envBool("GODEX_PROXY_ALLOW_ANY_KEY"), "Allow any bearer token")
-	fs.StringVar(&authPath, "auth-path", os.Getenv("GODEX_PROXY_AUTH_PATH"), "Auth file path (defaults to ~/.codex/auth.json)")
-	fs.StringVar(&cacheTTL, "cache-ttl", envOrDefault("GODEX_PROXY_CACHE_TTL", "6h"), "Prompt cache TTL")
-	fs.StringVar(&logLevel, "log-level", envOrDefault("GODEX_PROXY_LOG_LEVEL", "info"), "Log level (debug|info|warn|error)")
-	fs.BoolVar(&logRequests, "log-requests", envBool("GODEX_PROXY_LOG_REQUESTS"), "Log HTTP requests")
-	fs.StringVar(&keysPath, "keys-path", envOrDefault("GODEX_PROXY_KEYS_PATH", proxy.DefaultKeysPath()), "API keys file")
-	fs.StringVar(&rateLimit, "rate", envOrDefault("GODEX_PROXY_RATE", "60/m"), "Default rate limit (e.g. 60/m)")
-	fs.IntVar(&burst, "burst", envInt("GODEX_PROXY_BURST", 10), "Default rate burst")
-	fs.Int64Var(&quotaTokens, "quota-tokens", envInt64("GODEX_PROXY_QUOTA_TOKENS", 0), "Default token quota (0 = none)")
-	fs.StringVar(&statsPath, "stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", ""), "Usage stats JSONL path (empty disables history)")
-	fs.StringVar(&statsSummary, "stats-summary", envOrDefault("GODEX_PROXY_STATS_SUMMARY", proxy.DefaultStatsSummaryPath()), "Usage summary JSON path")
-	fs.Int64Var(&statsMaxBytes, "stats-max-bytes", envInt64("GODEX_PROXY_STATS_MAX_BYTES", 10*1024*1024), "Max stats file size before rotation")
-	fs.IntVar(&statsMaxBackups, "stats-max-backups", envInt("GODEX_PROXY_STATS_MAX_BACKUPS", 3), "Max rotated stats files to keep")
-	fs.StringVar(&eventsPath, "events-path", envOrDefault("GODEX_PROXY_EVENTS_PATH", proxy.DefaultEventsPath()), "Proxy events JSONL path")
-	fs.Int64Var(&eventsMaxBytes, "events-max-bytes", envInt64("GODEX_PROXY_EVENTS_MAX_BYTES", 1024*1024), "Max events file size before rotation")
-	fs.IntVar(&eventsBackups, "events-max-backups", envInt("GODEX_PROXY_EVENTS_MAX_BACKUPS", 3), "Max rotated events files to keep")
-	fs.StringVar(&meterWindow, "meter-window", envOrDefault("GODEX_PROXY_METER_WINDOW", ""), "Metering window duration (e.g. 24h); empty disables window")
+	fs.StringVar(&listen, "listen", cfg.Proxy.Listen, "Listen address")
+	fs.StringVar(&apiKey, "api-key", cfg.Proxy.APIKey, "API key")
+	fs.StringVar(&model, "model", cfg.Proxy.Model, "Model name")
+	fs.StringVar(&baseURL, "base-url", cfg.Proxy.BaseURL, "Upstream base URL")
+	fs.StringVar(&originator, "originator", cfg.Proxy.Originator, "Originator header")
+	fs.StringVar(&userAgent, "user-agent", cfg.Proxy.UserAgent, "User-Agent header")
+	fs.BoolVar(&allowRefresh, "allow-refresh", cfg.Proxy.AllowRefresh, "Allow network token refresh on 401")
+	fs.BoolVar(&allowAnyKey, "allow-any-key", cfg.Proxy.AllowAnyKey, "Allow any bearer token")
+	fs.StringVar(&authPath, "auth-path", cfg.Proxy.AuthPath, "Auth file path (defaults to ~/.codex/auth.json)")
+	fs.StringVar(&cacheTTL, "cache-ttl", cfg.Proxy.CacheTTL.String(), "Prompt cache TTL")
+	fs.StringVar(&logLevel, "log-level", cfg.Proxy.LogLevel, "Log level (debug|info|warn|error)")
+	fs.BoolVar(&logRequests, "log-requests", cfg.Proxy.LogRequests, "Log HTTP requests")
+	fs.StringVar(&keysPath, "keys-path", cfg.Proxy.KeysPath, "API keys file")
+	fs.StringVar(&rateLimit, "rate", cfg.Proxy.DefaultRate, "Default rate limit (e.g. 60/m)")
+	fs.IntVar(&burst, "burst", cfg.Proxy.DefaultBurst, "Default rate burst")
+	fs.Int64Var(&quotaTokens, "quota-tokens", cfg.Proxy.DefaultQuota, "Default token quota (0 = none)")
+	fs.StringVar(&statsPath, "stats-path", cfg.Proxy.StatsPath, "Usage stats JSONL path (empty disables history)")
+	fs.StringVar(&statsSummary, "stats-summary", cfg.Proxy.StatsSummary, "Usage summary JSON path")
+	fs.Int64Var(&statsMaxBytes, "stats-max-bytes", cfg.Proxy.StatsMaxBytes, "Max stats file size before rotation")
+	fs.IntVar(&statsMaxBackups, "stats-max-backups", cfg.Proxy.StatsBackups, "Max rotated stats files to keep")
+	fs.StringVar(&eventsPath, "events-path", cfg.Proxy.EventsPath, "Proxy events JSONL path")
+	fs.Int64Var(&eventsMaxBytes, "events-max-bytes", cfg.Proxy.EventsMax, "Max events file size before rotation")
+	fs.IntVar(&eventsBackups, "events-max-backups", cfg.Proxy.EventsBackups, "Max rotated events files to keep")
+	fs.StringVar(&meterWindow, "meter-window", cfg.Proxy.MeterWindow.String(), "Metering window duration (e.g. 24h); empty disables window")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -548,7 +565,7 @@ func runProxy(args []string) error {
 		}
 	}
 
-	cfg := proxy.Config{
+	proxyCfg := proxy.Config{
 		Listen:          listen,
 		APIKey:          apiKey,
 		Model:           model,
@@ -574,7 +591,7 @@ func runProxy(args []string) error {
 		EventsBackups:   eventsBackups,
 		MeterWindow:     window,
 	}
-	return proxy.Run(cfg)
+	return proxy.Run(proxyCfg)
 }
 
 func runProxyKeys(args []string) error {
@@ -585,12 +602,13 @@ func runProxyKeys(args []string) error {
 
 	fs := flag.NewFlagSet("proxy keys", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	keysPath := fs.String("keys-path", envOrDefault("GODEX_PROXY_KEYS_PATH", proxy.DefaultKeysPath()), "API keys file")
+	cfg := config.Load()
+	keysPath := fs.String("keys-path", defaultString(cfg.Proxy.KeysPath, proxy.DefaultKeysPath()), "API keys file")
 	label := fs.String("label", "", "Key label")
 	providedKey := fs.String("key", "", "Use a pre-generated API key (BYOK)")
-	rate := fs.String("rate", "60/m", "Rate limit")
-	burst := fs.Int("burst", 10, "Burst")
-	quota := fs.Int64("quota-tokens", 0, "Token quota")
+	rate := fs.String("rate", defaultString(cfg.Proxy.DefaultRate, "60/m"), "Rate limit")
+	burst := fs.Int("burst", defaultInt(cfg.Proxy.DefaultBurst, 10), "Burst")
+	quota := fs.Int64("quota-tokens", defaultInt64(cfg.Proxy.DefaultQuota, 0), "Token quota")
 	expiresIn := fs.String("expires-in", "", "Key TTL (e.g. 24h); empty = no expiry")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -676,7 +694,8 @@ func runProxyUsage(args []string) error {
 
 	fs := flag.NewFlagSet("proxy usage", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	statsPath := fs.String("stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", proxy.DefaultStatsPath()), "Usage JSONL path")
+	cfg := config.Load()
+	statsPath := fs.String("stats-path", defaultString(cfg.Proxy.StatsPath, ""), "Usage JSONL path")
 	sinceStr := fs.String("since", "", "Lookback duration (e.g. 24h)")
 	keyID := fs.String("key", "", "Key id filter")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -773,6 +792,27 @@ func envInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	return out
+}
+
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func defaultInt(value, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func defaultInt64(value, fallback int64) int64 {
+	if value == 0 {
+		return fallback
+	}
+	return value
 }
 
 func usage() {
