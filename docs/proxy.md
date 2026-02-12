@@ -122,6 +122,10 @@ export OPENAI_BASE_URL="http://127.0.0.1:39001/v1"
 - `--burst` (default: `10`)
 - `--quota-tokens` (default: `0` = disabled)
 - `--stats-path` (default: `~/.codex/proxy-usage.jsonl`)
+- `--stats-max-bytes` (default: `10485760`)
+- `--stats-max-backups` (default: `3`)
+
+The stats log rotates to `.1`, `.2`, ... when the size limit is exceeded.
 
 ## Environment variables
 
@@ -140,6 +144,8 @@ export OPENAI_BASE_URL="http://127.0.0.1:39001/v1"
 - `GODEX_PROXY_BURST`
 - `GODEX_PROXY_QUOTA_TOKENS`
 - `GODEX_PROXY_STATS_PATH`
+- `GODEX_PROXY_STATS_MAX_BYTES`
+- `GODEX_PROXY_STATS_MAX_BACKUPS`
 
 ## Prompt cache reuse
 

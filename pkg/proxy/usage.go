@@ -21,19 +21,22 @@ type UsageEvent struct {
 }
 
 type UsageStore struct {
-	path   string
-	mu     sync.Mutex
-	counts map[string]int
+	path       string
+	maxBytes   int64
+	maxBackups int
+	mu         sync.Mutex
+	counts     map[string]int
 }
 
-func NewUsageStore(path string) *UsageStore {
-	return &UsageStore{path: path, counts: map[string]int{}}
+func NewUsageStore(path string, maxBytes int64, maxBackups int) *UsageStore {
+	return &UsageStore{path: path, maxBytes: maxBytes, maxBackups: maxBackups, counts: map[string]int{}}
 }
 
 func (u *UsageStore) Record(ev UsageEvent) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if strings.TrimSpace(u.path) != "" {
+		_ = u.rotateIfNeeded()
 		f, err := os.OpenFile(u.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err == nil {
 			enc := json.NewEncoder(f)
@@ -44,6 +47,20 @@ func (u *UsageStore) Record(ev UsageEvent) {
 	if ev.TotalTokens > 0 {
 		u.counts[ev.KeyID] += ev.TotalTokens
 	}
+}
+
+func (u *UsageStore) rotateIfNeeded() error {
+	if u.maxBytes <= 0 {
+		return nil
+	}
+	info, err := os.Stat(u.path)
+	if err != nil {
+		return nil
+	}
+	if info.Size() < u.maxBytes {
+		return nil
+	}
+	return rotateFile(u.path, u.maxBackups)
 }
 
 func (u *UsageStore) TotalTokens(keyID string) int {

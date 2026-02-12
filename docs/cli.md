@@ -94,6 +94,8 @@ Useful flags:
 - `--rate <spec>` / `--burst <n>` — rate limits (default 60/m, burst 10)
 - `--quota-tokens <n>` — per‑key token quota
 - `--stats-path <file>` — usage JSONL path
+- `--stats-max-bytes <n>` — rotate stats after size
+- `--stats-max-backups <n>` — max rotated files
 
 See `docs/proxy.md` for full proxy documentation.
 

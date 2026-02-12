@@ -21,23 +21,25 @@ var errNoFlusher = errors.New("response writer does not support flushing")
 
 // Config controls proxy behavior.
 type Config struct {
-	Listen       string
-	APIKey       string
-	Model        string
-	BaseURL      string
-	AllowRefresh bool
-	AllowAnyKey  bool
-	AuthPath     string
-	Originator   string
-	UserAgent    string
-	CacheTTL     time.Duration
-	LogLevel     string
-	LogRequests  bool
-	KeysPath     string
-	RateLimit    string
-	Burst        int
-	QuotaTokens  int64
-	StatsPath    string
+	Listen          string
+	APIKey          string
+	Model           string
+	BaseURL         string
+	AllowRefresh    bool
+	AllowAnyKey     bool
+	AuthPath        string
+	Originator      string
+	UserAgent       string
+	CacheTTL        time.Duration
+	LogLevel        string
+	LogRequests     bool
+	KeysPath        string
+	RateLimit       string
+	Burst           int
+	QuotaTokens     int64
+	StatsPath       string
+	StatsMaxBytes   int64
+	StatsMaxBackups int
 }
 
 type Server struct {
@@ -69,6 +71,12 @@ func Run(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.StatsPath) == "" {
 		cfg.StatsPath = DefaultStatsPath()
+	}
+	if cfg.StatsMaxBytes == 0 {
+		cfg.StatsMaxBytes = 10 * 1024 * 1024
+	}
+	if cfg.StatsMaxBackups == 0 {
+		cfg.StatsMaxBackups = 3
 	}
 	if strings.TrimSpace(cfg.RateLimit) == "" {
 		cfg.RateLimit = "60/m"
@@ -102,7 +110,7 @@ func Run(cfg Config) error {
 		}
 	}
 
-	usage := NewUsageStore(cfg.StatsPath)
+	usage := NewUsageStore(cfg.StatsPath, cfg.StatsMaxBytes, cfg.StatsMaxBackups)
 	limiters := NewLimiterStore(cfg.RateLimit, cfg.Burst)
 
 	s := &Server{

@@ -494,6 +494,8 @@ func runProxy(args []string) error {
 	var burst int
 	var quotaTokens int64
 	var statsPath string
+	var statsMaxBytes int64
+	var statsMaxBackups int
 
 	fs.StringVar(&listen, "listen", envOrDefault("GODEX_PROXY_LISTEN", "127.0.0.1:39001"), "Listen address")
 	fs.StringVar(&apiKey, "api-key", os.Getenv("GODEX_PROXY_API_KEY"), "API key")
@@ -512,6 +514,8 @@ func runProxy(args []string) error {
 	fs.IntVar(&burst, "burst", envInt("GODEX_PROXY_BURST", 10), "Default rate burst")
 	fs.Int64Var(&quotaTokens, "quota-tokens", envInt64("GODEX_PROXY_QUOTA_TOKENS", 0), "Default token quota (0 = none)")
 	fs.StringVar(&statsPath, "stats-path", envOrDefault("GODEX_PROXY_STATS_PATH", proxy.DefaultStatsPath()), "Usage stats JSONL path")
+	fs.Int64Var(&statsMaxBytes, "stats-max-bytes", envInt64("GODEX_PROXY_STATS_MAX_BYTES", 10*1024*1024), "Max stats file size before rotation")
+	fs.IntVar(&statsMaxBackups, "stats-max-backups", envInt("GODEX_PROXY_STATS_MAX_BACKUPS", 3), "Max rotated stats files to keep")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -528,23 +532,25 @@ func runProxy(args []string) error {
 	}
 
 	cfg := proxy.Config{
-		Listen:       listen,
-		APIKey:       apiKey,
-		Model:        model,
-		BaseURL:      baseURL,
-		AllowRefresh: allowRefresh,
-		AllowAnyKey:  allowAnyKey,
-		AuthPath:     authPath,
-		Originator:   originator,
-		UserAgent:    userAgent,
-		CacheTTL:     ttl,
-		LogLevel:     logLevel,
-		LogRequests:  logRequests,
-		KeysPath:     keysPath,
-		RateLimit:    rateLimit,
-		Burst:        burst,
-		QuotaTokens:  quotaTokens,
-		StatsPath:    statsPath,
+		Listen:          listen,
+		APIKey:          apiKey,
+		Model:           model,
+		BaseURL:         baseURL,
+		AllowRefresh:    allowRefresh,
+		AllowAnyKey:     allowAnyKey,
+		AuthPath:        authPath,
+		Originator:      originator,
+		UserAgent:       userAgent,
+		CacheTTL:        ttl,
+		LogLevel:        logLevel,
+		LogRequests:     logRequests,
+		KeysPath:        keysPath,
+		RateLimit:       rateLimit,
+		Burst:           burst,
+		QuotaTokens:     quotaTokens,
+		StatsPath:       statsPath,
+		StatsMaxBytes:   statsMaxBytes,
+		StatsMaxBackups: statsMaxBackups,
 	}
 	return proxy.Run(cfg)
 }
