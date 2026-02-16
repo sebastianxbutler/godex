@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.4 - 2026-02-16
+### Changed
+- **Documentation audit**: Updated glossary, debugging, cookbook, testing docs for v0.5.x features.
+- Added 12 new glossary terms (Backend, Router, OAuth, Model Alias, etc.).
+- Added multi-backend debugging guide (Anthropic OAuth, routing issues).
+- Added 8 new cookbook recipes (Claude usage, auth, probe commands).
+- Added E2E test documentation and coverage targets.
+
 ## 0.5.3 - 2026-02-16
 ### Added
 - **`godex auth status`**: Check authentication status for all backends.
