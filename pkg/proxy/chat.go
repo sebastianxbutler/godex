@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
+	"godex/pkg/backend"
 	"godex/pkg/client"
 	"godex/pkg/protocol"
 	"godex/pkg/sse"
@@ -66,15 +68,22 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		PromptCacheKey:    sessionKey,
 	}
 
-	cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
+	// Try router-based backend first, fall back to legacy client
+	be := s.backendForModel(req.Model)
+	if be == nil {
+		// Fall back to legacy Codex client
+		cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
+		be = &legacyClientBackend{client: cl}
+	}
+
 	if !req.Stream {
-		result, err := cl.StreamAndCollect(r.Context(), codexReq)
+		result, err := be.StreamAndCollect(r.Context(), codexReq)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
-		s.cache.SaveToolCalls(sessionKey, toolCallsFromResult(result))
-		resp := chatResponseFromResult(req.Model, result)
+		s.cache.SaveToolCalls(sessionKey, toolCallsFromBackendResult(result))
+		resp := chatResponseFromBackendResult(req.Model, result)
 		writeJSON(w, http.StatusOK, resp)
 		s.recordUsage(r, key, http.StatusOK, nil)
 		return
@@ -98,7 +107,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	sawTool := false
 
 	var usage *protocol.Usage
-	err = cl.StreamResponses(r.Context(), codexReq, func(ev sse.Event) error {
+	err = be.StreamResponses(r.Context(), codexReq, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
 		if ev.Value.Response != nil && ev.Value.Response.Usage != nil {
 			usage = ev.Value.Response.Usage
@@ -280,4 +289,81 @@ func toolCallsFromCollector(callInfo map[string]chatCallInfo, collector *sse.Col
 		out[callID] = ToolCall{Name: info.name, Arguments: args[callID]}
 	}
 	return out
+}
+
+// chatResponseFromBackendResult converts a backend.StreamResult to OpenAI chat response.
+func chatResponseFromBackendResult(model string, result backend.StreamResult) OpenAIChatResponse {
+	resp := OpenAIChatResponse{
+		ID:      newResponseID("chatcmpl"),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: []OpenAIChatChoice{{
+			Index: 0,
+			Message: OpenAIChatMessage{
+				Role:    "assistant",
+				Content: result.Text,
+			},
+			FinishReason: "stop",
+		}},
+	}
+	if len(result.ToolCalls) > 0 {
+		calls := make([]OpenAIChatToolCall, 0, len(result.ToolCalls))
+		for _, call := range result.ToolCalls {
+			calls = append(calls, OpenAIChatToolCall{
+				ID:   call.CallID,
+				Type: "function",
+				Function: OpenAIChatToolFunction{
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				},
+			})
+		}
+		resp.Choices[0].Message.ToolCalls = calls
+		resp.Choices[0].Message.Content = ""
+		resp.Choices[0].FinishReason = "tool_calls"
+	}
+	return resp
+}
+
+// toolCallsFromBackendResult converts backend tool calls to the cache format.
+func toolCallsFromBackendResult(result backend.StreamResult) map[string]ToolCall {
+	calls := map[string]ToolCall{}
+	for _, call := range result.ToolCalls {
+		calls[call.CallID] = ToolCall{Name: call.Name, Arguments: call.Arguments}
+	}
+	return calls
+}
+
+// legacyClientBackend wraps the old client.Client to implement backend.Backend.
+type legacyClientBackend struct {
+	client *client.Client
+}
+
+func (l *legacyClientBackend) Name() string {
+	return "codex-legacy"
+}
+
+func (l *legacyClientBackend) StreamResponses(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error {
+	return l.client.StreamResponses(ctx, req, onEvent)
+}
+
+func (l *legacyClientBackend) StreamAndCollect(ctx context.Context, req protocol.ResponsesRequest) (backend.StreamResult, error) {
+	result, err := l.client.StreamAndCollect(ctx, req)
+	if err != nil {
+		return backend.StreamResult{}, err
+	}
+	// Convert client.StreamResult to backend.StreamResult
+	toolCalls := make([]backend.ToolCall, len(result.ToolCalls))
+	for i, tc := range result.ToolCalls {
+		toolCalls[i] = backend.ToolCall{
+			CallID:    tc.CallID,
+			Name:      tc.Name,
+			Arguments: tc.Arguments,
+		}
+	}
+	return backend.StreamResult{
+		Text:      result.Text,
+		ToolCalls: toolCalls,
+	}, nil
 }

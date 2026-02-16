@@ -52,39 +52,68 @@ type ModelConfig struct {
 }
 
 type ProxyConfig struct {
-	Listen        string        `yaml:"listen"`
-	APIKey        string        `yaml:"api_key"`
-	AllowAnyKey   bool          `yaml:"allow_any_key"`
-	AllowRefresh  bool          `yaml:"allow_refresh"`
-	Model         string        `yaml:"model"`
-	Models        []ModelConfig `yaml:"models"`
-	BaseURL       string        `yaml:"base_url"`
-	Originator    string        `yaml:"originator"`
-	UserAgent     string        `yaml:"user_agent"`
-	AuthPath      string        `yaml:"auth_path"`
-	CacheTTL      time.Duration `yaml:"cache_ttl"`
-	LogLevel      string        `yaml:"log_level"`
-	LogRequests   bool          `yaml:"log_requests"`
-	KeysPath      string        `yaml:"keys_path"`
-	DefaultRate   string        `yaml:"default_rate"`
-	DefaultBurst  int           `yaml:"default_burst"`
-	DefaultQuota  int64         `yaml:"default_quota_tokens"`
-	StatsPath     string        `yaml:"stats_path"`
-	StatsSummary  string        `yaml:"stats_summary"`
-	StatsMaxBytes int64         `yaml:"stats_max_bytes"`
-	StatsBackups  int           `yaml:"stats_max_backups"`
-	EventsPath    string        `yaml:"events_path"`
-	EventsMax     int64         `yaml:"events_max_bytes"`
-	EventsBackups int           `yaml:"events_max_backups"`
-	MeterWindow   time.Duration `yaml:"meter_window"`
-	AdminSocket   string        `yaml:"admin_socket"`
+	Listen        string         `yaml:"listen"`
+	APIKey        string         `yaml:"api_key"`
+	AllowAnyKey   bool           `yaml:"allow_any_key"`
+	AllowRefresh  bool           `yaml:"allow_refresh"`
+	Model         string         `yaml:"model"`
+	Models        []ModelConfig  `yaml:"models"`
+	BaseURL       string         `yaml:"base_url"`
+	Originator    string         `yaml:"originator"`
+	UserAgent     string         `yaml:"user_agent"`
+	AuthPath      string         `yaml:"auth_path"`
+	CacheTTL      time.Duration  `yaml:"cache_ttl"`
+	LogLevel      string         `yaml:"log_level"`
+	LogRequests   bool           `yaml:"log_requests"`
+	KeysPath      string         `yaml:"keys_path"`
+	DefaultRate   string         `yaml:"default_rate"`
+	DefaultBurst  int            `yaml:"default_burst"`
+	DefaultQuota  int64          `yaml:"default_quota_tokens"`
+	StatsPath     string         `yaml:"stats_path"`
+	StatsSummary  string         `yaml:"stats_summary"`
+	StatsMaxBytes int64          `yaml:"stats_max_bytes"`
+	StatsBackups  int            `yaml:"stats_max_backups"`
+	EventsPath    string         `yaml:"events_path"`
+	EventsMax     int64          `yaml:"events_max_bytes"`
+	EventsBackups int            `yaml:"events_max_backups"`
+	MeterWindow   time.Duration  `yaml:"meter_window"`
+	AdminSocket   string         `yaml:"admin_socket"`
 	Payments      PaymentsConfig `yaml:"payments"`
+	Backends      BackendsConfig `yaml:"backends"`
 }
 
 type PaymentsConfig struct {
 	Enabled       bool   `yaml:"enabled"`
 	Provider      string `yaml:"provider"`
 	TokenMeterURL string `yaml:"token_meter_url"`
+}
+
+// BackendsConfig configures available LLM backends.
+type BackendsConfig struct {
+	Codex     CodexBackendConfig     `yaml:"codex"`
+	Anthropic AnthropicBackendConfig `yaml:"anthropic"`
+	Routing   RoutingConfig          `yaml:"routing"`
+}
+
+// CodexBackendConfig configures the Codex/ChatGPT backend.
+type CodexBackendConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	BaseURL         string `yaml:"base_url"`
+	CredentialsPath string `yaml:"credentials_path"`
+}
+
+// AnthropicBackendConfig configures the Anthropic backend.
+type AnthropicBackendConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	CredentialsPath string `yaml:"credentials_path"`
+	DefaultMaxTokens int   `yaml:"default_max_tokens"`
+}
+
+// RoutingConfig configures model-to-backend routing.
+type RoutingConfig struct {
+	Default  string              `yaml:"default"`
+	Patterns map[string][]string `yaml:"patterns"`
+	Aliases  map[string]string   `yaml:"aliases"`
 }
 
 func DefaultConfig() Config {
@@ -144,6 +173,30 @@ func DefaultConfig() Config {
 				Enabled:       false,
 				Provider:      "l402",
 				TokenMeterURL: "",
+			},
+			Backends: BackendsConfig{
+				Codex: CodexBackendConfig{
+					Enabled:         true,
+					BaseURL:         "https://chatgpt.com/backend-api/codex",
+					CredentialsPath: "",
+				},
+				Anthropic: AnthropicBackendConfig{
+					Enabled:          false,
+					CredentialsPath:  "",
+					DefaultMaxTokens: 4096,
+				},
+				Routing: RoutingConfig{
+					Default: "codex",
+					Patterns: map[string][]string{
+						"anthropic": {"claude-", "sonnet", "opus", "haiku"},
+						"codex":     {"gpt-", "o1-", "o3-", "codex-"},
+					},
+					Aliases: map[string]string{
+						"sonnet": "claude-sonnet-4-5-20250929",
+						"opus":   "claude-opus-4-5-20250929",
+						"haiku":  "claude-3-5-haiku-20241022",
+					},
+				},
 			},
 		},
 	}
