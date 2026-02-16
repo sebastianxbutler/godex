@@ -84,6 +84,7 @@ type Backend interface {
 
 Uses the official `anthropic-sdk-go` with OAuth authentication:
 - Reads tokens from `~/.claude/.credentials.json` (Claude Code)
+- **Automatic token refresh** when expired (no manual re-auth needed)
 - Requires `anthropic-beta: oauth-2025-04-20` header
 - Translates OpenAI format ↔ Anthropic Messages API
 

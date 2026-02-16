@@ -39,9 +39,14 @@ backends:
 ```
 
 ### "oauth token expired" (Anthropic)
-Claude Code OAuth tokens expire and need refresh.
+Claude Code OAuth tokens expire periodically (typically every ~1 hour).
 
-Fix: Re-authenticate via Claude Code CLI:
+**Godex handles this automatically!** As of v0.5.5, godex will:
+1. Detect expired tokens
+2. Use the refresh token to get a new access token
+3. Save the refreshed credentials to disk
+
+If automatic refresh fails (e.g., refresh token also expired), re-authenticate:
 ```bash
 claude auth login
 ```
