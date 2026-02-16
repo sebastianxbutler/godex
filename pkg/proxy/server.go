@@ -102,6 +102,11 @@ type Server struct {
 	payments   payments.Gateway
 	models     map[string]ModelEntry
 	router     *backend.Router
+
+	// Model discovery cache
+	cachedModels      []backend.ModelInfo
+	cachedModelsTime  time.Time
+	modelsCacheTTL    time.Duration
 }
 
 func Run(cfg Config) error {
@@ -235,17 +240,18 @@ func Run(cfg Config) error {
 	}
 
 	s := &Server{
-		cfg:        cfg,
-		cache:      NewCache(cfg.CacheTTL),
-		httpClient: http.DefaultClient,
-		authStore:  store,
-		logger:     NewLogger(ParseLogLevel(cfg.LogLevel)),
-		keys:       keys,
-		limiters:   limiters,
-		usage:      usage,
-		payments:   payGateway,
-		models:     models,
-		router:     router,
+		cfg:            cfg,
+		cache:          NewCache(cfg.CacheTTL),
+		httpClient:     http.DefaultClient,
+		authStore:      store,
+		logger:         NewLogger(ParseLogLevel(cfg.LogLevel)),
+		keys:           keys,
+		limiters:       limiters,
+		usage:          usage,
+		payments:       payGateway,
+		models:         models,
+		router:         router,
+		modelsCacheTTL: 5 * time.Minute, // Cache model list for 5 minutes
 	}
 
 	mux := http.NewServeMux()
@@ -300,14 +306,32 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if ok, _ := s.allowRequest(w, r, key); !ok {
 		return
 	}
+
+	// Try to get models from router with caching
 	var data []OpenAIModel
-	for _, m := range s.models {
-		data = append(data, OpenAIModel{
-			ID:      m.ID,
-			Object:  "model",
-			OwnedBy: "godex",
-		})
+	if s.router != nil {
+		models := s.getCachedModels(r.Context())
+		for _, m := range models {
+			data = append(data, OpenAIModel{
+				ID:      m.ID,
+				Object:  "model",
+				OwnedBy: "godex",
+			})
+		}
 	}
+
+	// Fall back to configured models
+	if len(data) == 0 {
+		for _, m := range s.models {
+			data = append(data, OpenAIModel{
+				ID:      m.ID,
+				Object:  "model",
+				OwnedBy: "godex",
+			})
+		}
+	}
+
+	// Final fallback to default model
 	if len(data) == 0 {
 		data = []OpenAIModel{{
 			ID:      s.cfg.Model,
@@ -315,12 +339,27 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			OwnedBy: "godex",
 		}}
 	}
+
 	resp := OpenAIModelsResponse{
 		Object: "list",
 		Data:   data,
 	}
 	writeJSON(w, http.StatusOK, resp)
 	s.logRequest(r, http.StatusOK, start)
+}
+
+// getCachedModels returns models from all backends, caching the result.
+func (s *Server) getCachedModels(ctx context.Context) []backend.ModelInfo {
+	if time.Since(s.cachedModelsTime) < s.modelsCacheTTL && len(s.cachedModels) > 0 {
+		return s.cachedModels
+	}
+
+	models := s.router.AllModels(ctx)
+	if len(models) > 0 {
+		s.cachedModels = models
+		s.cachedModelsTime = time.Now()
+	}
+	return models
 }
 
 func (s *Server) resolveModel(model string) (ModelEntry, bool) {

@@ -87,6 +87,20 @@ Uses the official `anthropic-sdk-go` with OAuth authentication:
 - Requires `anthropic-beta: oauth-2025-04-20` header
 - Translates OpenAI format ↔ Anthropic Messages API
 
+### Dynamic model discovery
+
+The `/v1/models` endpoint queries backends for available models:
+- **Anthropic**: Calls `GET /v1/models` API (live discovery)
+- **Codex**: Returns known model list (hardcoded)
+- Results cached for 5 minutes
+
+```go
+type Backend interface {
+    // ... existing methods ...
+    ListModels(ctx) ([]ModelInfo, error)
+}
+```
+
 ## Design goals
 - **Minimal surface area**
 - **Deterministic output** for tests

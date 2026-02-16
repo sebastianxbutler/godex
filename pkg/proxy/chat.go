@@ -367,3 +367,8 @@ func (l *legacyClientBackend) StreamAndCollect(ctx context.Context, req protocol
 		ToolCalls: toolCalls,
 	}, nil
 }
+
+func (l *legacyClientBackend) ListModels(ctx context.Context) ([]backend.ModelInfo, error) {
+	// Legacy client doesn't support model listing
+	return nil, nil
+}

@@ -22,6 +22,13 @@ type StreamResult struct {
 	Usage     *protocol.Usage
 }
 
+// ModelInfo describes an available model.
+type ModelInfo struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
 // Backend defines the interface that all LLM backends must implement.
 type Backend interface {
 	// Name returns the backend identifier (e.g., "codex", "anthropic").
@@ -32,6 +39,10 @@ type Backend interface {
 
 	// StreamAndCollect streams a request and returns collected output.
 	StreamAndCollect(ctx context.Context, req protocol.ResponsesRequest) (StreamResult, error)
+
+	// ListModels returns the models available from this backend.
+	// Returns nil if model listing is not supported.
+	ListModels(ctx context.Context) ([]ModelInfo, error)
 }
 
 // ToolHandler processes tool calls from the model.

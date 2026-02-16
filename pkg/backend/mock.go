@@ -113,3 +113,13 @@ func (m *MockBackend) StreamAndCollect(ctx context.Context, req protocol.Respons
 		},
 	}, nil
 }
+
+// ListModels returns mock model info.
+func (m *MockBackend) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return []ModelInfo{
+		{ID: "mock-model", DisplayName: "Mock Model"},
+	}, nil
+}

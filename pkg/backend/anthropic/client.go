@@ -142,3 +142,31 @@ func (c *Client) StreamAndCollect(ctx context.Context, req protocol.ResponsesReq
 
 	return result, nil
 }
+
+// ListModels returns the models available from Anthropic.
+func (c *Client) ListModels(ctx context.Context) ([]backend.ModelInfo, error) {
+	token, err := c.tokens.AccessToken()
+	if err != nil {
+		return nil, fmt.Errorf("get access token: %w", err)
+	}
+
+	client := anthropic.NewClient(
+		option.WithAuthToken(token),
+		option.WithHeader("anthropic-beta", "oauth-2025-04-20"),
+	)
+
+	page, err := client.Models.List(ctx, anthropic.ModelListParams{})
+	if err != nil {
+		return nil, fmt.Errorf("list models: %w", err)
+	}
+
+	var models []backend.ModelInfo
+	for _, m := range page.Data {
+		models = append(models, backend.ModelInfo{
+			ID:          m.ID,
+			DisplayName: m.DisplayName,
+			CreatedAt:   m.CreatedAt.Format("2006-01-02"),
+		})
+	}
+	return models, nil
+}

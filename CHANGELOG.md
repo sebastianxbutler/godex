@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.1 - 2026-02-16
+### Added
+- **Dynamic model discovery**: `/v1/models` now queries backends for available models.
+- **Anthropic model listing**: Live discovery via Anthropic `/v1/models` API.
+- **Model caching**: Backend model lists cached for 5 minutes.
+- **`ListModels` interface**: All backends implement `ListModels(ctx) ([]ModelInfo, error)`.
+
+### Changed
+- Updated README with multi-backend documentation.
+- Updated architecture docs with model discovery details.
+
 ## 0.5.0 - 2026-02-16
 ### Added
 - **Multi-backend architecture**: pluggable backend system supporting multiple LLM providers.

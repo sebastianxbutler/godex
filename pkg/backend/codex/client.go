@@ -205,3 +205,19 @@ func (c *Client) retryDelay(attempt int) time.Duration {
 	}
 	return time.Duration(attempt) * c.cfg.RetryDelay
 }
+
+// knownCodexModels lists the models available via the Codex/ChatGPT backend.
+// This is a static list since there's no discovery API.
+var knownCodexModels = []backend.ModelInfo{
+	{ID: "gpt-5.2-codex", DisplayName: "GPT-5.2 Codex"},
+	{ID: "o3", DisplayName: "o3"},
+	{ID: "o3-mini", DisplayName: "o3 Mini"},
+	{ID: "o1-pro", DisplayName: "o1 Pro"},
+	{ID: "o1", DisplayName: "o1"},
+	{ID: "o1-mini", DisplayName: "o1 Mini"},
+}
+
+// ListModels returns the known models for the Codex backend.
+func (c *Client) ListModels(ctx context.Context) ([]backend.ModelInfo, error) {
+	return knownCodexModels, nil
+}

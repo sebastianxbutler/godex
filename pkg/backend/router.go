@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"strings"
 	"sync"
 )
@@ -113,4 +114,30 @@ func DefaultRouterConfig() RouterConfig {
 		},
 		Default: "codex",
 	}
+}
+
+// ListAllModels queries all registered backends for their available models.
+// Returns a map of backend name to model list.
+func (r *Router) ListAllModels(ctx context.Context) map[string][]ModelInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make(map[string][]ModelInfo)
+	for name, b := range r.backends {
+		models, err := b.ListModels(ctx)
+		if err == nil && len(models) > 0 {
+			result[name] = models
+		}
+	}
+	return result
+}
+
+// AllModels returns a flat list of all models from all backends.
+func (r *Router) AllModels(ctx context.Context) []ModelInfo {
+	modelMap := r.ListAllModels(ctx)
+	var all []ModelInfo
+	for _, models := range modelMap {
+		all = append(all, models...)
+	}
+	return all
 }

@@ -1,8 +1,13 @@
 # Godex Docs
 
-Welcome to the Godex docs. Godex is a minimal Go client for the Codex (ChatGPT backend) Responses API with tool calls, SSE streaming, and an OpenAI‑compatible proxy.
+Welcome to the Godex docs. Godex is a multi-backend LLM proxy with an OpenAI-compatible API.
+
+## Supported Backends
+- **Codex/ChatGPT** — GPT models via ChatGPT backend API
+- **Anthropic** — Claude models via official SDK (Claude Code OAuth)
 
 ## What this covers
+- Multi-backend routing and configuration
 - Core CLI usage (`exec`, `proxy`)
 - Tool calling and tool loops
 - Logging and observability

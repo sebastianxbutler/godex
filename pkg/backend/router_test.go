@@ -20,6 +20,9 @@ func (m *mockBackend) StreamResponses(ctx context.Context, req protocol.Response
 func (m *mockBackend) StreamAndCollect(ctx context.Context, req protocol.ResponsesRequest) (StreamResult, error) {
 	return StreamResult{}, nil
 }
+func (m *mockBackend) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	return []ModelInfo{{ID: m.name + "-model"}}, nil
+}
 
 func TestRouterBackendFor(t *testing.T) {
 	config := DefaultRouterConfig()
@@ -82,5 +85,31 @@ func TestRouterExpandAlias(t *testing.T) {
 				t.Errorf("ExpandAlias(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRouterListAllModels(t *testing.T) {
+	config := DefaultRouterConfig()
+	router := NewRouter(config)
+
+	anthropic := &mockBackend{name: "anthropic"}
+	codex := &mockBackend{name: "codex"}
+	router.Register("anthropic", anthropic)
+	router.Register("codex", codex)
+
+	models := router.ListAllModels(context.Background())
+	if len(models) != 2 {
+		t.Errorf("expected 2 backends, got %d", len(models))
+	}
+	if _, ok := models["anthropic"]; !ok {
+		t.Error("missing anthropic models")
+	}
+	if _, ok := models["codex"]; !ok {
+		t.Error("missing codex models")
+	}
+
+	all := router.AllModels(context.Background())
+	if len(all) != 2 {
+		t.Errorf("expected 2 models, got %d", len(all))
 	}
 }
