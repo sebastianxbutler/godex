@@ -69,8 +69,8 @@ func TestRouterExpandAlias(t *testing.T) {
 		want  string
 	}{
 		{"sonnet", "claude-sonnet-4-5-20250929"},
-		{"opus", "claude-opus-4-5-20250929"},
-		{"haiku", "claude-3-5-haiku-20241022"},
+		{"opus", "claude-opus-4-5"},
+		{"haiku", "claude-haiku-4-5"},
 		{"gpt-4o", "gpt-4o"},           // no alias
 		{"SONNET", "claude-sonnet-4-5-20250929"}, // case insensitive
 	}
