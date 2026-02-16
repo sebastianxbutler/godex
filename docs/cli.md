@@ -168,15 +168,18 @@ godex probe sonnet
 # OK: sonnet → claude-sonnet-4-5-20250929 (anthropic) [Claude Sonnet 4.5]
 
 # JSON output
-godex probe o3-mini --json
+godex probe --json o3-mini
 # {"id":"o3-mini","object":"model","owned_by":"godex","backend":"codex","display_name":"o3 Mini"}
+
+# With explicit key and URL
+godex probe --url http://localhost:39001 --key $KEY sonnet
 
 # Check non-existent model
 godex probe fake-model
 # ERROR: model "fake-model" not found
 ```
 
-Flags:
+Flags (must come before model name):
 - `--url <url>` — proxy URL (default: `http://127.0.0.1:39001`)
 - `--key <key>` — API key (or set `GODEX_API_KEY` env var)
 - `--json` — output as JSON
