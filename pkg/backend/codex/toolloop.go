@@ -1,27 +1,17 @@
-package client
+package codex
 
 import (
 	"context"
 	"fmt"
 
+	"godex/pkg/backend"
 	"godex/pkg/protocol"
 )
 
-type ToolHandler interface {
-	Handle(ctx context.Context, call ToolCall) (string, error)
-}
-
-type ToolLoopOptions struct {
-	MaxSteps int
-}
-
-func (c *Client) RunToolLoop(ctx context.Context, req protocol.ResponsesRequest, handler ToolHandler, opts ToolLoopOptions) (StreamResult, error) {
-	return RunToolLoopWith(ctx, req, handler, opts, c.StreamResponses)
-}
-
-func RunToolLoopWith(ctx context.Context, req protocol.ResponsesRequest, handler ToolHandler, opts ToolLoopOptions, stream Streamer) (StreamResult, error) {
+// RunToolLoop executes a tool loop with the given handler.
+func (c *Client) RunToolLoop(ctx context.Context, req protocol.ResponsesRequest, handler backend.ToolHandler, opts backend.ToolLoopOptions) (backend.StreamResult, error) {
 	if handler == nil {
-		return StreamResult{}, fmt.Errorf("tool handler is required")
+		return backend.StreamResult{}, fmt.Errorf("tool handler is required")
 	}
 	max := opts.MaxSteps
 	if max <= 0 {
@@ -30,9 +20,9 @@ func RunToolLoopWith(ctx context.Context, req protocol.ResponsesRequest, handler
 	current := req
 
 	for step := 0; step < max; step++ {
-		result, err := StreamAndCollectWith(ctx, current, stream)
+		result, err := c.StreamAndCollect(ctx, current)
 		if err != nil {
-			return StreamResult{}, err
+			return backend.StreamResult{}, err
 		}
 		if len(result.ToolCalls) == 0 {
 			return result, nil
@@ -49,7 +39,7 @@ func RunToolLoopWith(ctx context.Context, req protocol.ResponsesRequest, handler
 
 		current = followupRequest(req, BuildToolFollowupInputs(result.ToolCalls, outputs))
 	}
-	return StreamResult{}, fmt.Errorf("tool loop exceeded max steps")
+	return backend.StreamResult{}, fmt.Errorf("tool loop exceeded max steps")
 }
 
 func followupRequest(base protocol.ResponsesRequest, input []protocol.ResponseInputItem) protocol.ResponsesRequest {
@@ -67,4 +57,16 @@ func followupRequest(base protocol.ResponsesRequest, input []protocol.ResponseIn
 		PromptCacheKey:    base.PromptCacheKey,
 		Text:              base.Text,
 	}
+}
+
+// BuildToolFollowupInputs builds follow-up input items containing the tool call
+// and tool output pairs. Outputs map is keyed by call_id.
+func BuildToolFollowupInputs(calls []backend.ToolCall, outputs map[string]string) []protocol.ResponseInputItem {
+	items := make([]protocol.ResponseInputItem, 0, len(calls)*2)
+	for _, call := range calls {
+		items = append(items, protocol.FunctionCallInput(call.Name, call.CallID, call.Arguments))
+		output := outputs[call.CallID]
+		items = append(items, protocol.FunctionCallOutputInput(call.CallID, output))
+	}
+	return items
 }
