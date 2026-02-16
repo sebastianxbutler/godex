@@ -5,6 +5,7 @@ Godex exposes these primary commands:
 - `godex exec` — run a single Responses API call (supports tools + streaming)
 - `godex proxy` — run an OpenAI‑compatible proxy server
 - `godex probe` — check if a model exists and get routing info
+- `godex auth` — manage backend authentication
 - `godex version` / `--version` — show build version
 
 Config:
@@ -110,6 +111,52 @@ Useful flags:
 - `--meter-window <duration>` — usage window (e.g., 24h)
 
 See `docs/proxy.md` for full proxy documentation, including L402 payment flows.
+
+## `godex auth`
+
+Manage backend authentication credentials.
+
+### `godex auth status`
+
+Check current authentication status for all backends:
+
+```bash
+godex auth status
+# godex authentication status
+# ===========================
+#
+# Codex:       ✅ configured
+#              Path: ~/.codex/auth.json
+#
+# Anthropic:   ✅ configured
+#              Path: ~/.claude/.credentials.json
+#              Expires: 2026-02-16 14:55
+```
+
+### `godex auth setup`
+
+Interactive setup wizard for missing credentials:
+
+```bash
+godex auth setup
+# Detects existing credentials
+# Guides through missing ones (runs native CLI auth commands)
+# Tests connections
+```
+
+The setup wizard will:
+1. Check which backends are already configured
+2. For missing backends, offer to run the native CLI auth command:
+   - **Codex**: `codex auth` (requires `@anthropic/codex` npm package)
+   - **Anthropic**: `claude auth login` (requires `@anthropic-ai/claude-code` npm package)
+3. Show final status
+
+### Credential Locations
+
+| Backend | Path | Created By |
+|---------|------|------------|
+| Codex | `~/.codex/auth.json` | `codex auth` |
+| Anthropic | `~/.claude/.credentials.json` | `claude auth login` |
 
 ## `godex probe`
 

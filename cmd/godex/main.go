@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +63,11 @@ func main() {
 		}
 	case "probe":
 		if err := runProbe(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+	case "auth":
+		if err := runAuth(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -977,6 +983,271 @@ func runProbe(args []string) error {
 	return nil
 }
 
+func runAuth(args []string) error {
+	if len(args) == 0 {
+		return runAuthStatus()
+	}
+
+	switch args[0] {
+	case "status":
+		return runAuthStatus()
+	case "setup":
+		return runAuthSetup()
+	default:
+		return fmt.Errorf("unknown auth command: %s (use 'status' or 'setup')", args[0])
+	}
+}
+
+// AuthStatus holds the status of a backend's authentication.
+type AuthStatus struct {
+	Backend     string
+	Configured  bool
+	Path        string
+	ExpiresAt   time.Time
+	Error       string
+}
+
+func runAuthStatus() error {
+	fmt.Println("godex authentication status")
+	fmt.Println("===========================")
+	fmt.Println()
+
+	// Check Codex
+	codexStatus := checkCodexAuth()
+	printAuthStatus("Codex", codexStatus)
+
+	// Check Anthropic
+	anthropicStatus := checkAnthropicAuth()
+	printAuthStatus("Anthropic", anthropicStatus)
+
+	return nil
+}
+
+func printAuthStatus(name string, status AuthStatus) {
+	if status.Configured {
+		fmt.Printf("%-12s ✅ configured\n", name+":")
+		fmt.Printf("             Path: %s\n", status.Path)
+		if !status.ExpiresAt.IsZero() {
+			if status.ExpiresAt.After(time.Now()) {
+				fmt.Printf("             Expires: %s\n", status.ExpiresAt.Format("2006-01-02 15:04"))
+			} else {
+				fmt.Printf("             ⚠️  Expired: %s\n", status.ExpiresAt.Format("2006-01-02 15:04"))
+			}
+		}
+	} else {
+		fmt.Printf("%-12s ❌ not configured\n", name+":")
+		if status.Path != "" {
+			fmt.Printf("             Expected: %s\n", status.Path)
+		}
+		if status.Error != "" {
+			fmt.Printf("             Error: %s\n", status.Error)
+		}
+	}
+	fmt.Println()
+}
+
+func checkCodexAuth() AuthStatus {
+	home, _ := os.UserHomeDir()
+	path := home + "/.codex/auth.json"
+
+	status := AuthStatus{
+		Backend: "codex",
+		Path:    path,
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			status.Error = "file not found"
+		} else {
+			status.Error = err.Error()
+		}
+		return status
+	}
+
+	// Codex auth.json structure: { auth_mode, tokens: { access_token, ... } }
+	var auth struct {
+		AuthMode string `json:"auth_mode"`
+		APIKey   string `json:"OPENAI_API_KEY"`
+		Tokens   struct {
+			AccessToken string `json:"access_token"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal(data, &auth); err != nil {
+		status.Error = "invalid JSON: " + err.Error()
+		return status
+	}
+
+	// Check for API key mode
+	if auth.AuthMode == "api_key" && auth.APIKey != "" {
+		status.Configured = true
+		return status
+	}
+
+	// Check for OAuth/ChatGPT mode
+	if auth.Tokens.AccessToken != "" {
+		status.Configured = true
+		return status
+	}
+
+	status.Error = "no credentials found (no access_token or API key)"
+	return status
+}
+
+func checkAnthropicAuth() AuthStatus {
+	home, _ := os.UserHomeDir()
+	path := home + "/.claude/.credentials.json"
+
+	status := AuthStatus{
+		Backend: "anthropic",
+		Path:    path,
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			status.Error = "file not found"
+		} else {
+			status.Error = err.Error()
+		}
+		return status
+	}
+
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+			ExpiresAt   int64  `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &creds); err != nil {
+		status.Error = "invalid JSON: " + err.Error()
+		return status
+	}
+
+	if creds.ClaudeAiOauth.AccessToken == "" {
+		status.Error = "no accessToken found"
+		return status
+	}
+
+	status.Configured = true
+	if creds.ClaudeAiOauth.ExpiresAt > 0 {
+		// Claude uses milliseconds
+		status.ExpiresAt = time.UnixMilli(creds.ClaudeAiOauth.ExpiresAt)
+	}
+	return status
+}
+
+func runAuthSetup() error {
+	fmt.Println("godex authentication setup")
+	fmt.Println("==========================")
+	fmt.Println()
+
+	// Check current status
+	codexStatus := checkCodexAuth()
+	anthropicStatus := checkAnthropicAuth()
+
+	allConfigured := codexStatus.Configured && anthropicStatus.Configured
+
+	if allConfigured {
+		fmt.Println("✅ All backends are already configured!")
+		fmt.Println()
+		runAuthStatus()
+		return nil
+	}
+
+	// Setup missing backends
+	if !codexStatus.Configured {
+		fmt.Println("Setting up Codex authentication...")
+		fmt.Println("──────────────────────────────────")
+		fmt.Println()
+		fmt.Println("Codex uses OAuth authentication via the Codex CLI.")
+		fmt.Println()
+		fmt.Println("To authenticate:")
+		fmt.Println("  1. Install Codex CLI:  npm install -g @anthropic/codex")
+		fmt.Println("  2. Run:                codex auth")
+		fmt.Println("  3. Follow the browser prompts to sign in")
+		fmt.Println()
+		fmt.Printf("  Credentials will be saved to: %s\n", codexStatus.Path)
+		fmt.Println()
+
+		if promptYesNo("Would you like to run 'codex auth' now?") {
+			fmt.Println()
+			fmt.Println("Running: codex auth")
+			fmt.Println()
+			cmd := execCommand("codex", "auth")
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("⚠️  codex auth failed: %v\n", err)
+				fmt.Println("   You may need to install it first: npm install -g @anthropic/codex")
+			} else {
+				fmt.Println()
+				fmt.Println("✅ Codex authentication complete!")
+			}
+		}
+		fmt.Println()
+	} else {
+		fmt.Println("✅ Codex: already configured")
+		fmt.Println()
+	}
+
+	if !anthropicStatus.Configured {
+		fmt.Println("Setting up Anthropic authentication...")
+		fmt.Println("───────────────────────────────────────")
+		fmt.Println()
+		fmt.Println("Anthropic uses OAuth via the Claude Code CLI.")
+		fmt.Println()
+		fmt.Println("To authenticate:")
+		fmt.Println("  1. Install Claude Code: npm install -g @anthropic-ai/claude-code")
+		fmt.Println("  2. Run:                 claude auth login")
+		fmt.Println("  3. Follow the browser prompts to sign in")
+		fmt.Println()
+		fmt.Printf("  Credentials will be saved to: %s\n", anthropicStatus.Path)
+		fmt.Println()
+
+		if promptYesNo("Would you like to run 'claude auth login' now?") {
+			fmt.Println()
+			fmt.Println("Running: claude auth login")
+			fmt.Println()
+			cmd := execCommand("claude", "auth", "login")
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("⚠️  claude auth login failed: %v\n", err)
+				fmt.Println("   You may need to install it first: npm install -g @anthropic-ai/claude-code")
+			} else {
+				fmt.Println()
+				fmt.Println("✅ Anthropic authentication complete!")
+			}
+		}
+		fmt.Println()
+	} else {
+		fmt.Println("✅ Anthropic: already configured")
+		fmt.Println()
+	}
+
+	// Final status
+	fmt.Println("─────────────────────────────────")
+	fmt.Println("Final status:")
+	fmt.Println()
+	return runAuthStatus()
+}
+
+func promptYesNo(prompt string) bool {
+	fmt.Printf("%s [y/N] ", prompt)
+	var response string
+	fmt.Scanln(&response)
+	response = strings.ToLower(strings.TrimSpace(response))
+	return response == "y" || response == "yes"
+}
+
+// execCommand wraps exec.Command for testability
+var execCommand = func(name string, args ...string) *exec.Cmd {
+	return exec.Command(name, args...)
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: godex exec --config <path> --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
 	fmt.Fprintln(os.Stderr, "       godex proxy --config <path> --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
@@ -984,4 +1255,5 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "       godex proxy keys list | update <id> | revoke <id|key> | rotate <id|key>")
 	fmt.Fprintln(os.Stderr, "       godex proxy usage --config <path> list [--since 24h] [--key <id>] | show <id>")
 	fmt.Fprintln(os.Stderr, "       godex probe <model> [--url http://127.0.0.1:39001] [--key <api-key>] [--json]")
+	fmt.Fprintln(os.Stderr, "       godex auth status | setup")
 }

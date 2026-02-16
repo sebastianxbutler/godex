@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.3 - 2026-02-16
+### Added
+- **`godex auth status`**: Check authentication status for all backends.
+- **`godex auth setup`**: Interactive wizard for configuring missing credentials.
+- Detects existing Codex and Anthropic credentials automatically.
+- Guides users to run native CLI auth commands (`codex auth`, `claude auth login`).
+- **GPT-5.3 Codex**: Added to known models list.
+
+### Example
+```bash
+godex auth status
+# Codex:       ✅ configured
+# Anthropic:   ✅ configured (expires 2026-02-16 14:55)
+
+godex auth setup
+# Interactive setup for missing backends
+```
+
 ## 0.5.2 - 2026-02-16
 ### Added
 - **Model probe endpoint**: `GET /v1/models/{model_id}` returns model info or 404.
