@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.5.0 - 2026-02-16
+### Added
+- **Multi-backend architecture**: pluggable backend system supporting multiple LLM providers.
+- **Anthropic backend**: full support for Claude models via official Anthropic SDK.
+- **Claude Code OAuth integration**: authenticate using `~/.claude/.credentials.json` tokens.
+- **Model routing**: automatic backend selection based on model prefix patterns.
+- **Model aliases**: shorthand names (`sonnet`, `opus`, `haiku`) resolve to full model IDs.
+- **Backend interface** (`pkg/backend/backend.go`): common interface for all backends.
+- **Router** (`pkg/backend/router.go`): selects backend by model prefix patterns.
+- **Integration tests**: comprehensive test suite for multi-backend scenarios.
+- **E2E test script** (`scripts/e2e-test.sh`): automated testing for both backends.
+
+### Changed
+- Codex client refactored to `pkg/backend/codex/` following backend interface.
+- Proxy server now initializes backends via config and routes requests through router.
+
+### Configuration
+```yaml
+backends:
+  anthropic:
+    enabled: true
+  routing:
+    patterns:
+      anthropic: ["claude-", "sonnet", "opus", "haiku"]
+    aliases:
+      sonnet: "claude-sonnet-4-5-20250929"
+      opus: "claude-opus-4-20250514"
+      haiku: "claude-haiku-4-20250414"
+```
+
 ## 0.4.1 - 2026-02-16
 ### Added
 - **Multi-model support**: configure multiple models via `proxy.models` list.
