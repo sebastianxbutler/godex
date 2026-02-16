@@ -334,6 +334,10 @@ func (s *Server) resolveModel(model string) (ModelEntry, bool) {
 	if m, ok := s.models[model]; ok {
 		return m, true
 	}
+	// If router has a backend for this model, allow it
+	if s.router != nil && s.router.BackendFor(model) != nil {
+		return ModelEntry{ID: model, BaseURL: ""}, true
+	}
 	// fallback to default if no models configured
 	if len(s.models) == 0 {
 		return ModelEntry{ID: model, BaseURL: s.cfg.BaseURL}, true
