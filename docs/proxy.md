@@ -36,6 +36,25 @@ curl http://127.0.0.1:39001/v1/pricing
 {"status":"disabled","message":"payments not enabled"}
 ```
 
+## Multi-model support
+
+Godex can serve multiple models. Configure in YAML:
+
+```yaml
+proxy:
+  model: gpt-5.2-codex           # default model
+  base_url: https://chatgpt.com/backend-api/codex
+  models:
+    - id: gpt-5.2-codex
+    - id: chat-gpt-5-3
+      base_url: https://other-backend/api  # optional per-model URL
+```
+
+- `GET /v1/models` returns all configured models
+- Requests can specify any available model
+- If model not in list, returns 400 error
+- Each model can have its own `base_url` (falls back to default)
+
 ## Quick start
 
 ```bash

@@ -21,11 +21,18 @@ import (
 
 var errNoFlusher = errors.New("response writer does not support flushing")
 
+// ModelEntry defines a supported model with optional base URL override.
+type ModelEntry struct {
+	ID      string
+	BaseURL string
+}
+
 // Config controls proxy behavior.
 type Config struct {
 	Listen          string
 	APIKey          string
 	Model           string
+	Models          []ModelEntry
 	BaseURL         string
 	AllowRefresh    bool
 	AllowAnyKey     bool
@@ -61,6 +68,7 @@ type Server struct {
 	limiters   *LimiterStore
 	usage      *UsageStore
 	payments   payments.Gateway
+	models     map[string]ModelEntry
 }
 
 func Run(cfg Config) error {
@@ -135,6 +143,20 @@ func Run(cfg Config) error {
 	limiters := NewLimiterStore(cfg.RateLimit, cfg.Burst)
 	payGateway := payments.NewTokenMeterGateway(cfg.Payments)
 
+	// Build models map
+	models := make(map[string]ModelEntry)
+	if len(cfg.Models) > 0 {
+		for _, m := range cfg.Models {
+			baseURL := m.BaseURL
+			if baseURL == "" {
+				baseURL = cfg.BaseURL
+			}
+			models[m.ID] = ModelEntry{ID: m.ID, BaseURL: baseURL}
+		}
+	} else if cfg.Model != "" {
+		models[cfg.Model] = ModelEntry{ID: cfg.Model, BaseURL: cfg.BaseURL}
+	}
+
 	s := &Server{
 		cfg:        cfg,
 		cache:      NewCache(cfg.CacheTTL),
@@ -145,6 +167,7 @@ func Run(cfg Config) error {
 		limiters:   limiters,
 		usage:      usage,
 		payments:   payGateway,
+		models:     models,
 	}
 
 	mux := http.NewServeMux()
@@ -174,8 +197,15 @@ func Run(cfg Config) error {
 }
 
 func (s *Server) clientForSession(sessionID string) *client.Client {
+	return s.clientForSessionWithBaseURL(sessionID, s.cfg.BaseURL)
+}
+
+func (s *Server) clientForSessionWithBaseURL(sessionID string, baseURL string) *client.Client {
+	if baseURL == "" {
+		baseURL = s.cfg.BaseURL
+	}
 	return client.New(s.httpClient, s.authStore, client.Config{
-		BaseURL:      s.cfg.BaseURL,
+		BaseURL:      baseURL,
 		Originator:   s.cfg.Originator,
 		UserAgent:    s.cfg.UserAgent,
 		SessionID:    sessionID,
@@ -192,16 +222,41 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if ok, _ := s.allowRequest(w, r, key); !ok {
 		return
 	}
-	resp := OpenAIModelsResponse{
-		Object: "list",
-		Data: []OpenAIModel{{
+	var data []OpenAIModel
+	for _, m := range s.models {
+		data = append(data, OpenAIModel{
+			ID:      m.ID,
+			Object:  "model",
+			OwnedBy: "godex",
+		})
+	}
+	if len(data) == 0 {
+		data = []OpenAIModel{{
 			ID:      s.cfg.Model,
 			Object:  "model",
 			OwnedBy: "godex",
-		}},
+		}}
+	}
+	resp := OpenAIModelsResponse{
+		Object: "list",
+		Data:   data,
 	}
 	writeJSON(w, http.StatusOK, resp)
 	s.logRequest(r, http.StatusOK, start)
+}
+
+func (s *Server) resolveModel(model string) (ModelEntry, bool) {
+	if model == "" {
+		model = s.cfg.Model
+	}
+	if m, ok := s.models[model]; ok {
+		return m, true
+	}
+	// fallback to default if no models configured
+	if len(s.models) == 0 {
+		return ModelEntry{ID: model, BaseURL: s.cfg.BaseURL}, true
+	}
+	return ModelEntry{}, false
 }
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
@@ -212,9 +267,13 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		s.logRequest(r, http.StatusBadRequest, start)
 		return
 	}
-	if req.Model == "" {
-		req.Model = s.cfg.Model
+	modelEntry, ok := s.resolveModel(req.Model)
+	if !ok {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("model %q not available", req.Model))
+		s.logRequest(r, http.StatusBadRequest, start)
+		return
 	}
+	req.Model = modelEntry.ID
 	key, ok := s.requireAuthOrPayment(w, r, req.Model)
 	if !ok {
 		return
@@ -263,7 +322,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		PromptCacheKey:    sessionKey,
 	}
 
-	cl := s.clientForSession(sessionKey)
+	cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
 	if !stream {
 		result, err := cl.StreamAndCollect(r.Context(), codexReq)
 		if err != nil {

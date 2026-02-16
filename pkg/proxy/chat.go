@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -21,9 +22,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if req.Model == "" {
-		req.Model = s.cfg.Model
+	modelEntry, ok := s.resolveModel(req.Model)
+	if !ok {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("model %q not available", req.Model))
+		return
 	}
+	req.Model = modelEntry.ID
 	key, ok := s.requireAuthOrPayment(w, r, req.Model)
 	if !ok {
 		return
@@ -62,7 +66,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		PromptCacheKey:    sessionKey,
 	}
 
-	cl := s.clientForSession(sessionKey)
+	cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
 	if !req.Stream {
 		result, err := cl.StreamAndCollect(r.Context(), codexReq)
 		if err != nil {

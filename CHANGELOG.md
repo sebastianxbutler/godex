@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 - 2026-02-16
+### Added
+- **Multi-model support**: configure multiple models via `proxy.models` list.
+- Each model can have its own `base_url`.
+- `/v1/models` returns all configured models.
+- Model validation on requests (400 if model not available).
+
 ## 0.4.0 - 2026-02-16
 ### Added
 - **Payments gateway integration**: L402 payments via external token-meter service.

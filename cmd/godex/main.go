@@ -573,10 +573,16 @@ func runProxy(args []string) error {
 		Provider:      cfg.Proxy.Payments.Provider,
 		TokenMeterURL: cfg.Proxy.Payments.TokenMeterURL,
 	}
+	// Convert models config
+	var models []proxy.ModelEntry
+	for _, m := range cfg.Proxy.Models {
+		models = append(models, proxy.ModelEntry{ID: m.ID, BaseURL: m.BaseURL})
+	}
 	proxyCfg := proxy.Config{
 		Listen:          listen,
 		APIKey:          apiKey,
 		Model:           model,
+		Models:          models,
 		BaseURL:         baseURL,
 		AllowRefresh:    allowRefresh,
 		AllowAnyKey:     allowAnyKey,

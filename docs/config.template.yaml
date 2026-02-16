@@ -32,8 +32,15 @@ proxy:
   api_key: ""
   allow_any_key: false
   allow_refresh: false
-  model: gpt-5.2-codex
-  base_url: https://chatgpt.com/backend-api/codex
+  model: gpt-5.2-codex           # default model (backward compat)
+  base_url: https://chatgpt.com/backend-api/codex  # default base URL
+  
+  # Multi-model support: list available models
+  # If empty, uses single 'model' above
+  models:
+    - id: gpt-5.2-codex
+    - id: chat-gpt-5-3
+      # base_url: https://other-backend/api  # optional per-model URL
   originator: codex_cli_rs
   user_agent: godex/0.0
   auth_path: "" # default: ~/.codex/auth.json

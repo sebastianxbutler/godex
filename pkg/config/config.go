@@ -46,12 +46,18 @@ type AuthConfig struct {
 	Scope      string `yaml:"scope"`
 }
 
+type ModelConfig struct {
+	ID      string `yaml:"id"`
+	BaseURL string `yaml:"base_url"`
+}
+
 type ProxyConfig struct {
 	Listen        string        `yaml:"listen"`
 	APIKey        string        `yaml:"api_key"`
 	AllowAnyKey   bool          `yaml:"allow_any_key"`
 	AllowRefresh  bool          `yaml:"allow_refresh"`
 	Model         string        `yaml:"model"`
+	Models        []ModelConfig `yaml:"models"`
 	BaseURL       string        `yaml:"base_url"`
 	Originator    string        `yaml:"originator"`
 	UserAgent     string        `yaml:"user_agent"`
