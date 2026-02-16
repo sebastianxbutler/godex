@@ -15,6 +15,7 @@ import (
 	"godex/pkg/auth"
 	"godex/pkg/client"
 	"godex/pkg/config"
+	"godex/pkg/payments"
 	"godex/pkg/protocol"
 	"godex/pkg/proxy"
 	"godex/pkg/sse"
@@ -567,6 +568,11 @@ func runProxy(args []string) error {
 		}
 	}
 
+	payCfg := payments.Config{
+		Enabled:       cfg.Proxy.Payments.Enabled,
+		Provider:      cfg.Proxy.Payments.Provider,
+		TokenMeterURL: cfg.Proxy.Payments.TokenMeterURL,
+	}
 	proxyCfg := proxy.Config{
 		Listen:          listen,
 		APIKey:          apiKey,
@@ -592,6 +598,8 @@ func runProxy(args []string) error {
 		EventsMaxBytes:  eventsMaxBytes,
 		EventsBackups:   eventsBackups,
 		MeterWindow:     window,
+		AdminSocket:     cfg.Proxy.AdminSocket,
+		Payments:        payCfg,
 	}
 	return proxy.Run(proxyCfg)
 }
@@ -819,6 +827,15 @@ func defaultInt64(value, fallback int64) int64 {
 		return fallback
 	}
 	return value
+}
+
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return strings.Replace(path, "~", home, 1)
+		}
+	}
+	return path
 }
 
 func configPathFromArgs(args []string) string {

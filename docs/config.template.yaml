@@ -56,3 +56,9 @@ proxy:
   events_max_backups: 3
 
   meter_window: "" # empty disables windowed reset
+  admin_socket: "~/.godex/admin.sock"
+
+  payments:
+    enabled: false
+    provider: l402
+    token_meter_url: ""

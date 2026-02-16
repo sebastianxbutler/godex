@@ -6,6 +6,7 @@ Welcome to the Godex docs. Godex is a minimal Go client for the Codex (ChatGPT b
 - Core CLI usage (`exec`, `proxy`)
 - Tool calling and tool loops
 - Logging and observability
+- L402 Lightning payments
 - Testing workflows and mock modes
 - Debugging common failures
 - Glossary of key terms
@@ -29,6 +30,7 @@ Welcome to the Godex docs. Godex is a minimal Go client for the Codex (ChatGPT b
 
 ## Sections
 - **CLI Usage:** `cli.md`
+- **Proxy (payments via token-meter):** `proxy.md`
 - **Logging & Observability:** `logging.md`
 - **Testing:** `testing.md`
 - **Debugging:** `debugging.md`

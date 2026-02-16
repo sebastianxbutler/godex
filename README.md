@@ -65,6 +65,13 @@ chmod +x godex
 ./godex proxy --api-key "local-dev-key"
 ```
 
+### L402 (Lightning) flags
+```bash
+./godex proxy --macaroon-key ~/.godex/macaroon-keys.json
+./godex proxy --macaroon-rotate
+./godex proxy --l402-redeemed-path ~/.godex/l402-redeemed.jsonl
+```
+
 ## Logging
 
 ```bash

@@ -108,7 +108,7 @@ Useful flags:
 - `--meter-window <dur>` — metering window (resets totals each window)
 - `--meter-window <duration>` — usage window (e.g., 24h)
 
-See `docs/proxy.md` for full proxy documentation.
+See `docs/proxy.md` for full proxy documentation, including L402 payment flows.
 
 ## Wire compliance
 Godex supports Wire flags for compatibility with multi‑provider runners:

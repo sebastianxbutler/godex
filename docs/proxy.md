@@ -7,9 +7,34 @@ Responses backend. It supports `/v1/responses`, `/v1/models`, and
 ## Endpoints
 
 - `GET /v1/models`
+- `GET /v1/pricing`
 - `POST /v1/responses`
 - `POST /v1/chat/completions`
 - `GET /health`
+
+## Pricing endpoint
+
+`GET /v1/pricing`
+
+- Proxies pricing data from token‑meter when available.
+- Returns a fallback JSON message if token‑meter is unavailable or payments are disabled.
+
+Examples:
+```bash
+curl http://127.0.0.1:39001/v1/pricing
+```
+
+```json
+{"status":"ok","btc_usd":68840.9,"updated_at":"2026-02-13T23:25:10Z","prices":{"gpt-5.2-codex":{"input_usd_per_1m":1.75,"cached_input_usd_per_1m":0.175,"output_usd_per_1m":14.0,"billing_mode":"blended"}}}
+```
+
+```json
+{"status":"unavailable","message":"token-meter not running"}
+```
+
+```json
+{"status":"disabled","message":"payments not enabled"}
+```
 
 ## Quick start
 
@@ -188,6 +213,36 @@ last system instructions per session key and reuses them if a client omits
 - If a follow-up request includes only `function_call_output`, the proxy
   reconstructs the missing `function_call` from cache to satisfy the Codex
   backend’s requirement.
+
+## Payments (L402 via token-meter)
+
+Godex delegates L402 challenges and redemption to **token-meter**. Godex remains authoritative for balances and allowances, while token-meter handles Lightning payments and pricing.
+
+Configuration lives under `proxy.payments` in the config template.
+
+### Setup guide
+1) **Run token-meter** with phoenixd configured.
+2) **Configure godex** to point at token-meter:
+```yaml
+proxy:
+  payments:
+    enabled: true
+    provider: l402
+    token_meter_url: "http://127.0.0.1:39900"
+  admin_socket: "~/.godex/admin.sock"
+```
+3) **Start godex proxy**:
+```bash
+./godex proxy --config ~/.config/godex/config.yaml
+```
+
+### Usage guide
+Usage is identical to L402 flows, but handled by token-meter:
+- Missing key → 402 with `WWW-Authenticate: L402 ...`
+- Pay invoice → retry with `Authorization: L402 <macaroon>:<preimage>`
+- Receive API key + tokens, then call with `Authorization: Bearer <api_key>`
+
+See token-meter docs for payment configuration details.
 
 ## OpenClaw integration
 

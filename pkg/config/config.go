@@ -71,6 +71,14 @@ type ProxyConfig struct {
 	EventsMax     int64         `yaml:"events_max_bytes"`
 	EventsBackups int           `yaml:"events_max_backups"`
 	MeterWindow   time.Duration `yaml:"meter_window"`
+	AdminSocket   string        `yaml:"admin_socket"`
+	Payments      PaymentsConfig `yaml:"payments"`
+}
+
+type PaymentsConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	Provider      string `yaml:"provider"`
+	TokenMeterURL string `yaml:"token_meter_url"`
 }
 
 func DefaultConfig() Config {
@@ -125,6 +133,12 @@ func DefaultConfig() Config {
 			EventsMax:     1024 * 1024,
 			EventsBackups: 3,
 			MeterWindow:   0,
+			AdminSocket:   "~/.godex/admin.sock",
+			Payments: PaymentsConfig{
+				Enabled:       false,
+				Provider:      "l402",
+				TokenMeterURL: "",
+			},
 		},
 	}
 }
@@ -305,6 +319,18 @@ func ApplyEnv(cfg *Config) {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.Proxy.MeterWindow = d
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_ADMIN_SOCKET")); v != "" {
+		cfg.Proxy.AdminSocket = v
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PAYMENTS_ENABLED")); v != "" {
+		cfg.Proxy.Payments.Enabled = parseBool(v)
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PAYMENTS_PROVIDER")); v != "" {
+		cfg.Proxy.Payments.Provider = v
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_TOKEN_METER_URL")); v != "" {
+		cfg.Proxy.Payments.TokenMeterURL = v
 	}
 }
 

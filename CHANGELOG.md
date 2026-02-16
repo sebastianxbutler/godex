@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-02-16
+### Added
+- **Payments gateway integration**: L402 payments via external token-meter service.
+- **Admin unix socket API**: `/admin/keys`, `/admin/keys/{id}/policy`, `/admin/keys/{id}/add-tokens` for programmatic key management.
+- **`/v1/pricing` endpoint**: proxies pricing data from token-meter with graceful fallback.
+- Token allowance and balance management for API keys.
+
+### Changed
+- L402 logic extracted to separate `token-meter` service (see token-meter repo).
+- Payments disabled by default; enable via `proxy.payments.enabled`.
+
+### Notes
+- godex works standalone without token-meter; pricing returns "disabled" or "unavailable" as appropriate.
 
 ## 0.3.3 - 2026-02-12
 - Proxy no longer requires --api-key; key store is default (allow-any-key for dev).

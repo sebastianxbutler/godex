@@ -15,15 +15,19 @@ import (
 )
 
 type KeyRecord struct {
-	ID          string     `json:"id"`
-	Label       string     `json:"label"`
-	Hash        string     `json:"hash"`
-	CreatedAt   time.Time  `json:"created_at"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	Rate        string     `json:"rate,omitempty"`
-	Burst       int        `json:"burst,omitempty"`
-	QuotaTokens int64      `json:"quota_tokens,omitempty"`
+	ID                   string     `json:"id"`
+	Label                string     `json:"label"`
+	Hash                 string     `json:"hash"`
+	CreatedAt            time.Time  `json:"created_at"`
+	RevokedAt            *time.Time `json:"revoked_at,omitempty"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+	Rate                 string     `json:"rate,omitempty"`
+	Burst                int        `json:"burst,omitempty"`
+	QuotaTokens          int64      `json:"quota_tokens,omitempty"`
+	TokenBalance         int64      `json:"token_balance,omitempty"`
+	TokenAllowance       int64      `json:"token_allowance,omitempty"`
+	AllowanceDurationSec int64      `json:"allowance_duration_sec,omitempty"`
+	AllowanceWindowStart *time.Time `json:"allowance_window_start,omitempty"`
 }
 
 type KeyFile struct {
@@ -184,6 +188,100 @@ func (s *KeyStore) Rotate(idOrToken string) (KeyRecord, string, error) {
 		return KeyRecord{}, "", errors.New("key not found")
 	}
 	return s.Add(rec.Label, rec.Rate, rec.Burst, rec.QuotaTokens, "", 0)
+}
+
+func (s *KeyStore) SetTokenPolicy(id string, balance int64, allowance int64, duration time.Duration) (KeyRecord, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return KeyRecord{}, errors.New("id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, rec := range s.file.Keys {
+		if rec.ID != id {
+			continue
+		}
+		rec.TokenBalance = balance
+		rec.TokenAllowance = allowance
+		if duration > 0 {
+			rec.AllowanceDurationSec = int64(duration.Seconds())
+		}
+		now := time.Now().UTC()
+		rec.AllowanceWindowStart = &now
+		s.file.Keys[i] = rec
+		if err := s.saveLocked(); err != nil {
+			return KeyRecord{}, err
+		}
+		return rec, nil
+	}
+	return KeyRecord{}, errors.New("key not found")
+}
+
+func (s *KeyStore) AddTokens(id string, delta int64) (KeyRecord, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return KeyRecord{}, errors.New("id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, rec := range s.file.Keys {
+		if rec.ID != id {
+			continue
+		}
+		rec.TokenBalance += delta
+		s.file.Keys[i] = rec
+		if err := s.saveLocked(); err != nil {
+			return KeyRecord{}, err
+		}
+		return rec, nil
+	}
+	return KeyRecord{}, errors.New("key not found")
+}
+
+func (s *KeyStore) UpdateAllowanceWindow(id string, tokenAllowance int64, duration time.Duration, now time.Time) (KeyRecord, bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return KeyRecord{}, false, errors.New("id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, rec := range s.file.Keys {
+		if rec.ID != id {
+			continue
+		}
+		updated := false
+		windowStart := rec.AllowanceWindowStart
+		if windowStart == nil || windowStart.IsZero() {
+			windowStart = &now
+			rec.AllowanceWindowStart = windowStart
+			updated = true
+		}
+		if duration > 0 && windowStart != nil {
+			if now.Sub(*windowStart) >= duration {
+				rec.AllowanceWindowStart = &now
+				if rec.TokenBalance < tokenAllowance {
+					rec.TokenBalance = tokenAllowance
+				}
+				updated = true
+			}
+		}
+		if tokenAllowance > 0 {
+			rec.TokenAllowance = tokenAllowance
+			updated = true
+		}
+		if duration > 0 {
+			rec.AllowanceDurationSec = int64(duration.Seconds())
+			updated = true
+		}
+		s.file.Keys[i] = rec
+		if updated {
+			if err := s.saveLocked(); err != nil {
+				return KeyRecord{}, false, err
+			}
+		}
+		return rec, updated, nil
+	}
+	return KeyRecord{}, false, errors.New("key not found")
 }
 
 func (s *KeyStore) Validate(token string) (KeyRecord, bool) {

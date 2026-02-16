@@ -16,13 +16,6 @@ type chatCallInfo struct {
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	key, ok := s.requireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !s.allowRequest(w, r, key) {
-		return
-	}
 	var req OpenAIChatRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -30,6 +23,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Model == "" {
 		req.Model = s.cfg.Model
+	}
+	key, ok := s.requireAuthOrPayment(w, r, req.Model)
+	if !ok {
+		return
+	}
+	if ok, reason := s.allowRequest(w, r, key); !ok {
+		if reason == "tokens" {
+			_ = s.issuePaymentChallenge(w, r, "topup", key.ID, req.Model)
+		}
+		return
 	}
 	sessionKey := s.sessionKey(req.User, r)
 	items := make([]OpenAIItem, 0, len(req.Messages))

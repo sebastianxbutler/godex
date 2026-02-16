@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"godex/pkg/admin"
 	"godex/pkg/auth"
 	"godex/pkg/client"
+	"godex/pkg/payments"
 	"godex/pkg/protocol"
 	"godex/pkg/sse"
 )
@@ -45,6 +47,8 @@ type Config struct {
 	EventsMaxBytes  int64
 	EventsBackups   int
 	MeterWindow     time.Duration
+	AdminSocket     string
+	Payments        payments.Config
 }
 
 type Server struct {
@@ -56,6 +60,7 @@ type Server struct {
 	keys       *KeyStore
 	limiters   *LimiterStore
 	usage      *UsageStore
+	payments   payments.Gateway
 }
 
 func Run(cfg Config) error {
@@ -128,6 +133,7 @@ func Run(cfg Config) error {
 	usage := NewUsageStore(cfg.StatsPath, cfg.StatsSummary, cfg.StatsMaxBytes, cfg.StatsMaxBackups, cfg.MeterWindow, cfg.EventsPath, cfg.EventsMaxBytes, cfg.EventsBackups)
 	_ = usage.LoadFromFile()
 	limiters := NewLimiterStore(cfg.RateLimit, cfg.Burst)
+	payGateway := payments.NewTokenMeterGateway(cfg.Payments)
 
 	s := &Server{
 		cfg:        cfg,
@@ -138,10 +144,12 @@ func Run(cfg Config) error {
 		keys:       keys,
 		limiters:   limiters,
 		usage:      usage,
+		payments:   payGateway,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", s.handleModels)
+	mux.HandleFunc("/v1/pricing", s.handlePricing)
 	mux.HandleFunc("/v1/responses", s.handleResponses)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -151,6 +159,16 @@ func Run(cfg Config) error {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	if strings.TrimSpace(cfg.AdminSocket) != "" {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			adminSrv := admin.New(cfg.AdminSocket, adminAdapter{keys: keys})
+			_ = adminSrv.Start(ctx)
+		}()
+	}
+
 
 	return server.ListenAndServe()
 }
@@ -171,7 +189,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.allowRequest(w, r, key) {
+	if ok, _ := s.allowRequest(w, r, key); !ok {
 		return
 	}
 	resp := OpenAIModelsResponse{
@@ -188,13 +206,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	key, ok := s.requireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !s.allowRequest(w, r, key) {
-		return
-	}
 	var req OpenAIResponsesRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -203,6 +214,16 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Model == "" {
 		req.Model = s.cfg.Model
+	}
+	key, ok := s.requireAuthOrPayment(w, r, req.Model)
+	if !ok {
+		return
+	}
+	if ok, reason := s.allowRequest(w, r, key); !ok {
+		if reason == "tokens" {
+			_ = s.issuePaymentChallenge(w, r, "topup", key.ID, req.Model)
+		}
+		return
 	}
 
 	sessionKey := s.sessionKey(req.User, r)
