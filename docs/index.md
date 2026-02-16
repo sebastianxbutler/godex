@@ -8,7 +8,8 @@ Welcome to the Godex docs. Godex is a multi-backend LLM proxy with an OpenAI-com
 
 ## What this covers
 - Multi-backend routing and configuration
-- Core CLI usage (`exec`, `proxy`)
+- Core CLI usage (`exec`, `proxy`, `auth`, `probe`)
+- Authentication setup and management
 - Tool calling and tool loops
 - Logging and observability
 - L402 Lightning payments
