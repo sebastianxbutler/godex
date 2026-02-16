@@ -1,7 +1,7 @@
 package anthropic
 
 import (
-	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,16 +13,9 @@ func TestTokenStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	credPath := filepath.Join(tmpDir, "credentials.json")
 
-	// Write test credentials
-	creds := credentialsFile{
-		ClaudeAIOAuth: &Credentials{
-			AccessToken:      "test-token-123",
-			RefreshToken:     "refresh-456",
-			ExpiresAt:        time.Now().Add(1 * time.Hour),
-			SubscriptionType: "max",
-		},
-	}
-	data, _ := json.Marshal(creds)
+	// Write test credentials (using Unix millis format like Claude Code)
+	expiresAt := time.Now().Add(1 * time.Hour).UnixMilli()
+	data := []byte(fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"test-token-123","refreshToken":"refresh-456","expiresAt":%d,"subscriptionType":"max"}}`, expiresAt))
 	os.WriteFile(credPath, data, 0600)
 
 	// Test loading
@@ -55,15 +48,9 @@ func TestTokenStoreExpired(t *testing.T) {
 	tmpDir := t.TempDir()
 	credPath := filepath.Join(tmpDir, "credentials.json")
 
-	// Write expired credentials
-	creds := credentialsFile{
-		ClaudeAIOAuth: &Credentials{
-			AccessToken:  "expired-token",
-			RefreshToken: "refresh-456",
-			ExpiresAt:    time.Now().Add(-1 * time.Hour), // expired
-		},
-	}
-	data, _ := json.Marshal(creds)
+	// Write expired credentials (Unix millis format)
+	expiresAt := time.Now().Add(-1 * time.Hour).UnixMilli()
+	data := []byte(fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"expired-token","refreshToken":"refresh-456","expiresAt":%d}}`, expiresAt))
 	os.WriteFile(credPath, data, 0600)
 
 	store := NewTokenStore(credPath)

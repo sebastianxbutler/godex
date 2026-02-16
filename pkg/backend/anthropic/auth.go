@@ -15,11 +15,37 @@ var DefaultCredentialsPath = filepath.Join(os.Getenv("HOME"), ".claude", ".crede
 
 // Credentials holds OAuth tokens for the Anthropic API.
 type Credentials struct {
-	AccessToken      string    `json:"accessToken"`
-	RefreshToken     string    `json:"refreshToken"`
-	ExpiresAt        time.Time `json:"expiresAt"`
-	SubscriptionType string    `json:"subscriptionType"`
-	RateLimitTier    string    `json:"rateLimitTier"`
+	AccessToken      string       `json:"accessToken"`
+	RefreshToken     string       `json:"refreshToken"`
+	ExpiresAt        UnixMillis   `json:"expiresAt"`
+	SubscriptionType string       `json:"subscriptionType"`
+	RateLimitTier    string       `json:"rateLimitTier"`
+}
+
+// UnixMillis is a time.Time that unmarshals from Unix milliseconds.
+type UnixMillis time.Time
+
+func (u *UnixMillis) UnmarshalJSON(data []byte) error {
+	var ms int64
+	if err := json.Unmarshal(data, &ms); err != nil {
+		// Try parsing as string (ISO format) as fallback
+		var s string
+		if err2 := json.Unmarshal(data, &s); err2 != nil {
+			return err
+		}
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return err
+		}
+		*u = UnixMillis(t)
+		return nil
+	}
+	*u = UnixMillis(time.UnixMilli(ms))
+	return nil
+}
+
+func (u UnixMillis) Time() time.Time {
+	return time.Time(u)
 }
 
 // credentialsFile represents the structure of ~/.claude/.credentials.json
@@ -82,7 +108,7 @@ func (s *TokenStore) AccessToken() (string, error) {
 	}
 
 	// Check if token is expired (with 5 minute buffer)
-	if time.Now().Add(5 * time.Minute).After(creds.ExpiresAt) {
+	if time.Now().Add(5 * time.Minute).After(creds.ExpiresAt.Time()) {
 		// Try to reload from disk - Claude Code may have refreshed it
 		if err := s.Load(); err != nil {
 			return "", fmt.Errorf("token expired and reload failed: %w", err)
@@ -92,8 +118,8 @@ func (s *TokenStore) AccessToken() (string, error) {
 		s.mu.RUnlock()
 
 		// If still expired after reload, return error
-		if time.Now().Add(5 * time.Minute).After(creds.ExpiresAt) {
-			return "", fmt.Errorf("token expired at %v, please run 'claude auth login' to refresh", creds.ExpiresAt)
+		if time.Now().Add(5 * time.Minute).After(creds.ExpiresAt.Time()) {
+			return "", fmt.Errorf("token expired at %v, please run 'claude auth login' to refresh", creds.ExpiresAt.Time())
 		}
 	}
 
@@ -108,7 +134,7 @@ func (s *TokenStore) IsExpired() bool {
 	if s.creds == nil {
 		return true
 	}
-	return time.Now().Add(5 * time.Minute).After(s.creds.ExpiresAt)
+	return time.Now().Add(5 * time.Minute).After(s.creds.ExpiresAt.Time())
 }
 
 // SubscriptionType returns the subscription type (e.g., "max", "pro").

@@ -60,7 +60,10 @@ func (c *Client) StreamResponses(ctx context.Context, req protocol.ResponsesRequ
 		return fmt.Errorf("get access token: %w", err)
 	}
 
-	client := anthropic.NewClient(option.WithAuthToken(token))
+	client := anthropic.NewClient(
+		option.WithAuthToken(token),
+		option.WithHeader("anthropic-beta", "oauth-2025-04-20"),
+	)
 
 	// Translate request
 	anthropicReq, err := translateRequest(req, c.cfg.DefaultMaxTokens)
