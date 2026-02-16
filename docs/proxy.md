@@ -55,6 +55,70 @@ proxy:
 - If model not in list, returns 400 error
 - Each model can have its own `base_url` (falls back to default)
 
+## Multi-backend support
+
+Godex supports routing requests to different LLM backends based on model name.
+
+### Configuration
+
+```yaml
+proxy:
+  backends:
+    codex:
+      enabled: true
+      base_url: "https://chatgpt.com/backend-api/codex"
+    anthropic:
+      enabled: true
+      # Uses ~/.claude/.credentials.json by default (Claude Code OAuth)
+      credentials_path: ""
+      default_max_tokens: 4096
+    routing:
+      default: "codex"  # fallback for unknown models
+      patterns:
+        anthropic: ["claude-", "sonnet", "opus", "haiku"]
+        codex: ["gpt-", "o1-", "o3-", "codex-"]
+      aliases:
+        sonnet: "claude-sonnet-4-5-20250929"
+        opus: "claude-opus-4-5"
+        haiku: "claude-haiku-4-5"
+```
+
+### Routing behavior
+
+1. **Model alias expansion**: `sonnet` → `claude-sonnet-4-5-20250929`
+2. **Pattern matching**: `claude-*` → Anthropic backend
+3. **Fallback**: Unknown models go to default backend
+
+### Anthropic backend
+
+The Anthropic backend uses the official `anthropic-sdk-go` SDK:
+- **Authentication**: OAuth tokens from Claude Code (`~/.claude/.credentials.json`)
+- **API**: Anthropic Messages API (`api.anthropic.com/v1/messages`)
+- **Features**: Streaming, tool calls, all Claude models
+
+Requirements:
+- Active Claude Code subscription (Max or Pro)
+- Valid OAuth token (auto-refreshed by Claude Code CLI)
+
+### Example: Using Claude via godex
+
+```bash
+# Start proxy with Anthropic enabled
+./godex proxy --config config.yaml
+
+# Call with model alias
+curl http://127.0.0.1:39001/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"sonnet","messages":[{"role":"user","content":"Hello"}]}'
+
+# Or with full model name
+curl http://127.0.0.1:39001/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-5-20250929","messages":[{"role":"user","content":"Hello"}]}'
+```
+
 ## Quick start
 
 ```bash

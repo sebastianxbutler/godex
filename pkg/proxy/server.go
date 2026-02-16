@@ -13,6 +13,9 @@ import (
 
 	"godex/pkg/admin"
 	"godex/pkg/auth"
+	"godex/pkg/backend"
+	"godex/pkg/backend/anthropic"
+	"godex/pkg/backend/codex"
 	"godex/pkg/client"
 	"godex/pkg/payments"
 	"godex/pkg/protocol"
@@ -56,6 +59,35 @@ type Config struct {
 	MeterWindow     time.Duration
 	AdminSocket     string
 	Payments        payments.Config
+	Backends        BackendsConfig
+}
+
+// BackendsConfig configures available LLM backends.
+type BackendsConfig struct {
+	Codex     CodexBackendConfig
+	Anthropic AnthropicBackendConfig
+	Routing   RoutingConfig
+}
+
+// CodexBackendConfig configures the Codex/ChatGPT backend.
+type CodexBackendConfig struct {
+	Enabled         bool
+	BaseURL         string
+	CredentialsPath string
+}
+
+// AnthropicBackendConfig configures the Anthropic backend.
+type AnthropicBackendConfig struct {
+	Enabled          bool
+	CredentialsPath  string
+	DefaultMaxTokens int
+}
+
+// RoutingConfig configures model-to-backend routing.
+type RoutingConfig struct {
+	Default  string
+	Patterns map[string][]string
+	Aliases  map[string]string
 }
 
 type Server struct {
@@ -69,6 +101,7 @@ type Server struct {
 	usage      *UsageStore
 	payments   payments.Gateway
 	models     map[string]ModelEntry
+	router     *backend.Router
 }
 
 func Run(cfg Config) error {
@@ -157,6 +190,50 @@ func Run(cfg Config) error {
 		models[cfg.Model] = ModelEntry{ID: cfg.Model, BaseURL: cfg.BaseURL}
 	}
 
+	// Initialize backend router
+	routerCfg := backend.RouterConfig{
+		Default:  cfg.Backends.Routing.Default,
+		Patterns: cfg.Backends.Routing.Patterns,
+		Aliases:  cfg.Backends.Routing.Aliases,
+	}
+	if routerCfg.Default == "" {
+		routerCfg.Default = "codex"
+	}
+	if routerCfg.Patterns == nil {
+		routerCfg.Patterns = backend.DefaultRouterConfig().Patterns
+	}
+	if routerCfg.Aliases == nil {
+		routerCfg.Aliases = backend.DefaultRouterConfig().Aliases
+	}
+	router := backend.NewRouter(routerCfg)
+
+	// Register Codex backend
+	if cfg.Backends.Codex.Enabled {
+		baseURL := cfg.Backends.Codex.BaseURL
+		if baseURL == "" {
+			baseURL = cfg.BaseURL
+		}
+		codexClient := codex.New(http.DefaultClient, store, codex.Config{
+			BaseURL:      baseURL,
+			Originator:   cfg.Originator,
+			UserAgent:    cfg.UserAgent,
+			AllowRefresh: cfg.AllowRefresh,
+		})
+		router.Register("codex", codexClient)
+	}
+
+	// Register Anthropic backend
+	if cfg.Backends.Anthropic.Enabled {
+		anthropicClient, err := anthropic.New(anthropic.Config{
+			CredentialsPath:  cfg.Backends.Anthropic.CredentialsPath,
+			DefaultMaxTokens: cfg.Backends.Anthropic.DefaultMaxTokens,
+		})
+		if err != nil {
+			return fmt.Errorf("init anthropic backend: %w", err)
+		}
+		router.Register("anthropic", anthropicClient)
+	}
+
 	s := &Server{
 		cfg:        cfg,
 		cache:      NewCache(cfg.CacheTTL),
@@ -168,6 +245,7 @@ func Run(cfg Config) error {
 		usage:      usage,
 		payments:   payGateway,
 		models:     models,
+		router:     router,
 	}
 
 	mux := http.NewServeMux()
@@ -249,14 +327,33 @@ func (s *Server) resolveModel(model string) (ModelEntry, bool) {
 	if model == "" {
 		model = s.cfg.Model
 	}
+	// Expand alias if configured
+	if s.router != nil {
+		model = s.router.ExpandAlias(model)
+	}
 	if m, ok := s.models[model]; ok {
 		return m, true
+	}
+	// If router has a backend for this model, allow it
+	if s.router != nil && s.router.BackendFor(model) != nil {
+		return ModelEntry{ID: model, BaseURL: ""}, true
 	}
 	// fallback to default if no models configured
 	if len(s.models) == 0 {
 		return ModelEntry{ID: model, BaseURL: s.cfg.BaseURL}, true
 	}
 	return ModelEntry{}, false
+}
+
+// backendForModel returns the appropriate backend for the given model.
+// Falls back to the legacy client-based approach if router is not configured.
+func (s *Server) backendForModel(model string) backend.Backend {
+	if s.router == nil {
+		return nil
+	}
+	// Expand alias first
+	model = s.router.ExpandAlias(model)
+	return s.router.BackendFor(model)
 }
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {

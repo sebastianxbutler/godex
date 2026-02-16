@@ -606,6 +606,23 @@ func runProxy(args []string) error {
 		MeterWindow:     window,
 		AdminSocket:     cfg.Proxy.AdminSocket,
 		Payments:        payCfg,
+		Backends: proxy.BackendsConfig{
+			Codex: proxy.CodexBackendConfig{
+				Enabled:         cfg.Proxy.Backends.Codex.Enabled,
+				BaseURL:         cfg.Proxy.Backends.Codex.BaseURL,
+				CredentialsPath: cfg.Proxy.Backends.Codex.CredentialsPath,
+			},
+			Anthropic: proxy.AnthropicBackendConfig{
+				Enabled:          cfg.Proxy.Backends.Anthropic.Enabled,
+				CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
+				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+			},
+			Routing: proxy.RoutingConfig{
+				Default:  cfg.Proxy.Backends.Routing.Default,
+				Patterns: cfg.Proxy.Backends.Routing.Patterns,
+				Aliases:  cfg.Proxy.Backends.Routing.Aliases,
+			},
+		},
 	}
 	return proxy.Run(proxyCfg)
 }

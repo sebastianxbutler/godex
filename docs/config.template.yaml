@@ -69,3 +69,33 @@ proxy:
     enabled: false
     provider: l402
     token_meter_url: ""
+
+  # Multi-backend support: route models to different LLM providers
+  backends:
+    codex:
+      enabled: true
+      base_url: https://chatgpt.com/backend-api/codex
+      credentials_path: ""  # default: ~/.codex/auth.json
+    
+    anthropic:
+      enabled: false  # set to true to enable Claude models
+      credentials_path: ""  # default: ~/.claude/.credentials.json
+      default_max_tokens: 4096
+    
+    routing:
+      default: codex  # fallback backend when no pattern matches
+      patterns:
+        anthropic:
+          - claude-
+          - sonnet
+          - opus
+          - haiku
+        codex:
+          - gpt-
+          - o1-
+          - o3-
+          - codex-
+      aliases:
+        sonnet: claude-sonnet-4-5-20250929
+        opus: claude-opus-4-5
+        haiku: claude-haiku-4-5

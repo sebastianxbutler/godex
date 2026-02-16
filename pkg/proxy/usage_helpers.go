@@ -51,7 +51,7 @@ func (s *Server) recordUsage(r *http.Request, key *KeyRecord, status int, usage 
 		// quota enforcement is coarse: reject once exceeded by total usage
 		// callers can use usage logs for stricter enforcement
 	}
-	if total > 0 {
+	if total > 0 && s.keys != nil {
 		_, _ = s.keys.AddTokens(key.ID, int64(-total))
 	}
 	s.usage.Record(UsageEvent{
