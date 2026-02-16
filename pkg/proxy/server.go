@@ -16,7 +16,10 @@ import (
 	"godex/pkg/backend"
 	"godex/pkg/backend/anthropic"
 	"godex/pkg/backend/codex"
+	"godex/pkg/backend/openai"
 	"godex/pkg/client"
+	"godex/pkg/config"
+	"godex/pkg/metrics"
 	"godex/pkg/payments"
 	"godex/pkg/protocol"
 	"godex/pkg/sse"
@@ -60,13 +63,22 @@ type Config struct {
 	AdminSocket     string
 	Payments        payments.Config
 	Backends        BackendsConfig
+	Metrics         MetricsConfig
 }
 
 // BackendsConfig configures available LLM backends.
 type BackendsConfig struct {
 	Codex     CodexBackendConfig
 	Anthropic AnthropicBackendConfig
+	Custom    map[string]config.CustomBackendConfig
 	Routing   RoutingConfig
+}
+
+// MetricsConfig configures per-backend metrics collection.
+type MetricsConfig struct {
+	Enabled     bool
+	Path        string
+	LogRequests bool
 }
 
 // CodexBackendConfig configures the Codex/ChatGPT backend.
@@ -98,6 +110,7 @@ type Server struct {
 	logger     *Logger
 	keys       *KeyStore
 	limiters   *LimiterStore
+	metrics    *metrics.Collector
 	usage      *UsageStore
 	payments   payments.Gateway
 	models     map[string]ModelEntry
@@ -239,6 +252,38 @@ func Run(cfg Config) error {
 		router.Register("anthropic", anthropicClient)
 	}
 
+	// Register custom OpenAI-compatible backends
+	for name, bcfg := range cfg.Backends.Custom {
+		if !bcfg.IsEnabled() {
+			continue
+		}
+		if bcfg.Type != "openai" {
+			return fmt.Errorf("unknown backend type for %s: %s", name, bcfg.Type)
+		}
+		customClient, err := openai.New(openai.Config{
+			Name:      name,
+			BaseURL:   bcfg.BaseURL,
+			Auth:      bcfg.Auth,
+			Timeout:   bcfg.Timeout,
+			Discovery: bcfg.HasDiscovery(),
+			Models:    bcfg.Models,
+		})
+		if err != nil {
+			return fmt.Errorf("init custom backend %s: %w", name, err)
+		}
+		router.Register(name, customClient)
+	}
+
+	// Initialize metrics collector
+	metricsCollector, err := metrics.NewCollector(metrics.Config{
+		Enabled:     cfg.Metrics.Enabled,
+		Path:        cfg.Metrics.Path,
+		LogRequests: cfg.Metrics.LogRequests,
+	})
+	if err != nil {
+		return fmt.Errorf("init metrics: %w", err)
+	}
+
 	s := &Server{
 		cfg:            cfg,
 		cache:          NewCache(cfg.CacheTTL),
@@ -251,6 +296,7 @@ func Run(cfg Config) error {
 		payments:       payGateway,
 		models:         models,
 		router:         router,
+		metrics:        metricsCollector,
 		modelsCacheTTL: 5 * time.Minute, // Cache model list for 5 minutes
 	}
 
@@ -260,6 +306,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/v1/pricing", s.handlePricing)
 	mux.HandleFunc("/v1/responses", s.handleResponses)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/health", s.handleHealth)
 
 	server := &http.Server{
@@ -782,10 +829,49 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.logRequest(r, http.StatusOK, start)
 }
 
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		s.logRequest(r, http.StatusMethodNotAllowed, start)
+		return
+	}
+
+	stats := s.metrics.Stats()
+	
+	// Build response with backend stats
+	response := map[string]any{
+		"backends": stats,
+	}
+	
+	writeJSON(w, http.StatusOK, response)
+	s.logRequest(r, http.StatusOK, start)
+}
+
 func (s *Server) logRequest(r *http.Request, status int, start time.Time) {
 	if !s.cfg.LogRequests || s.logger == nil {
 		return
 	}
 	elapsed := time.Since(start)
 	s.logger.Info("request", "method", r.Method, "path", r.URL.Path, "status", fmt.Sprintf("%d", status), "elapsed", elapsed.String())
+}
+
+// recordMetric records a request metric for a backend.
+func (s *Server) recordMetric(backend, model string, start time.Time, status, errMsg string, usage *protocol.Usage) {
+	if s.metrics == nil {
+		return
+	}
+	m := metrics.RequestMetric{
+		Timestamp: start,
+		Backend:   backend,
+		Model:     model,
+		Latency:   time.Since(start),
+		Status:    status,
+		Error:     errMsg,
+	}
+	if usage != nil {
+		m.TokensIn = usage.InputTokens
+		m.TokensOut = usage.OutputTokens
+	}
+	s.metrics.Record(m)
 }

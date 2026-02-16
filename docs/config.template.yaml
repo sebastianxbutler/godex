@@ -82,6 +82,36 @@ proxy:
       credentials_path: ""  # default: ~/.claude/.credentials.json
       default_max_tokens: 4096
     
+    # Custom OpenAI-compatible backends
+    custom:
+      # Example: local Ollama
+      # ollama:
+      #   type: openai
+      #   enabled: true
+      #   base_url: "http://localhost:11434/v1"
+      #   discovery: true  # auto-discover models via /v1/models
+      
+      # Example: Groq cloud
+      # groq:
+      #   type: openai
+      #   enabled: true
+      #   base_url: "https://api.groq.com/openai/v1"
+      #   auth:
+      #     type: api_key
+      #     key_env: "GROQ_API_KEY"  # read from environment
+      
+      # Example: vLLM with hard-coded models
+      # vllm:
+      #   type: openai
+      #   enabled: true
+      #   base_url: "http://gpu-server:8000/v1"
+      #   discovery: false
+      #   models:
+      #     - id: "vllm/llama-70b"
+      #       display_name: "Llama 70B (vLLM)"
+      #     - id: "vllm/mixtral"
+      #       display_name: "Mixtral 8x7B"
+    
     routing:
       default: codex  # fallback backend when no pattern matches
       patterns:
@@ -95,7 +125,20 @@ proxy:
           - o1-
           - o3-
           - codex-
+        # Add patterns for custom backends:
+        # ollama:
+        #   - llama-
+        #   - phi-
+        #   - qwen-
+        # groq:
+        #   - groq/*
       aliases:
         sonnet: claude-sonnet-4-5-20250929
         opus: claude-opus-4-5
         haiku: claude-haiku-4-5
+  
+  # Per-backend metrics collection
+  metrics:
+    enabled: false          # set to true to enable metrics
+    path: ""                # persist metrics to file (JSONL)
+    log_requests: false     # log individual request details

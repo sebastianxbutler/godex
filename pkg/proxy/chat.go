@@ -19,6 +19,7 @@ type chatCallInfo struct {
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	var req OpenAIChatRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -70,15 +71,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Try router-based backend first, fall back to legacy client
 	be := s.backendForModel(req.Model)
+	backendName := "codex-legacy"
 	if be == nil {
 		// Fall back to legacy Codex client
 		cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
 		be = &legacyClientBackend{client: cl}
+	} else {
+		backendName = be.Name()
 	}
 
 	if !req.Stream {
 		result, err := be.StreamAndCollect(r.Context(), codexReq)
 		if err != nil {
+			s.recordMetric(backendName, req.Model, start, "error", err.Error(), nil)
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
@@ -86,6 +91,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		resp := chatResponseFromBackendResult(req.Model, result)
 		writeJSON(w, http.StatusOK, resp)
 		s.recordUsage(r, key, http.StatusOK, nil)
+		s.recordMetric(backendName, req.Model, start, "ok", "", result.Usage)
 		return
 	}
 
@@ -218,6 +224,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		s.recordMetric(backendName, req.Model, start, "error", err.Error(), nil)
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
@@ -243,6 +250,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
 	s.recordUsage(r, key, http.StatusOK, usage)
+	s.recordMetric(backendName, req.Model, start, "ok", "", usage)
 }
 
 func chatResponseFromResult(model string, result client.StreamResult) OpenAIChatResponse {
