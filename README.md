@@ -21,6 +21,43 @@ If you want a unified API for multiple LLM providers, this is it.
 
 ## Quick Start
 
+### 1. Install
+```bash
+# From source
+go install github.com/sebastianxbutler/godex/cmd/godex@latest
+
+# Or download binary
+curl -L -o godex https://github.com/sebastianxbutler/godex/releases/latest/download/godex-linux-amd64
+chmod +x godex
+```
+
+### 2. Authenticate
+```bash
+# For GPT models (Codex)
+npm install -g @anthropic/codex && codex auth
+
+# For Claude models (Anthropic)
+curl -fsSL https://claude.ai/install.sh | bash && claude auth login
+
+# Verify
+./godex auth status
+```
+
+### 3. Run
+```bash
+# Start proxy
+./godex proxy --api-key "my-local-key"
+
+# Test it
+curl http://localhost:39001/v1/chat/completions \
+  -H "Authorization: Bearer my-local-key" \
+  -d '{"model":"sonnet","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+---
+
+## CLI Examples
+
 ```bash
 # Simple prompt
 ./godex exec --prompt "Hello"
@@ -54,15 +91,33 @@ Godex routes requests to different backends based on model name:
 | `claude-*`, `sonnet`, `opus`, `haiku` | Anthropic | `claude-sonnet-4-5-20250929`, `sonnet` |
 | `gpt-*`, `o1-*`, `o3-*`, `codex-*` | Codex | `gpt-5.2-codex`, `o3-mini` |
 
+### Codex Setup
+
+Godex uses Codex CLI OAuth tokens:
+
+```bash
+# Install Codex CLI (requires Node.js)
+npm install -g @anthropic/codex
+
+# Authenticate
+codex auth
+
+# Tokens are read from ~/.codex/auth.json
+```
+
 ### Anthropic Setup
 
 Godex uses Claude Code OAuth tokens (no API key needed):
 
 ```bash
-# Ensure you're logged into Claude Code
-claude auth status
+# Install Claude Code
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Authenticate
+claude auth login
 
 # Tokens are read from ~/.claude/.credentials.json
+# Godex auto-refreshes expired tokens!
 ```
 
 ### Configuration
@@ -130,11 +185,14 @@ chmod +x godex
 ./godex proxy --api-key "local-dev-key"
 ```
 
-### L402 (Lightning) flags
+### Check Auth Status
 ```bash
-./godex proxy --macaroon-key ~/.godex/macaroon-keys.json
-./godex proxy --macaroon-rotate
-./godex proxy --l402-redeemed-path ~/.godex/l402-redeemed.jsonl
+# Verify both backends are configured
+./godex auth status
+
+# Example output:
+# Codex:       ✅ configured
+# Anthropic:   ✅ configured (expires 2026-02-16 22:58)
 ```
 
 ## Logging
