@@ -144,7 +144,7 @@ The Anthropic backend uses the official `anthropic-sdk-go` SDK:
 
 Requirements:
 - Active Claude Code subscription (Max or Pro)
-- Valid OAuth token (auto-refreshed by Claude Code CLI)
+- Valid OAuth credentials (godex auto-refreshes expired tokens)
 
 ### Example: Using Claude via godex
 

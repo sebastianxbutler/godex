@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.5 - 2026-02-16
+### Added
+- **Automatic Anthropic OAuth token refresh**: Expired tokens are now refreshed automatically using the refresh token. No manual `claude auth login` required!
+- Token refresh uses the same OAuth flow as Claude Code CLI.
+- Refreshed credentials are saved back to `~/.claude/.credentials.json`.
+
+### Technical Details
+- OAuth endpoint: `POST https://console.anthropic.com/v1/oauth/token`
+- Grant type: `refresh_token`
+- New methods: `TokenStore.Refresh()`, `TokenStore.Save()`, `TokenStore.CanRefresh()`
+
 ## 0.5.4 - 2026-02-16
 ### Changed
 - **Documentation audit**: Updated glossary, debugging, cookbook, testing docs for v0.5.x features.
