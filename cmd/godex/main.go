@@ -7,6 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -55,6 +57,11 @@ func main() {
 		}
 	case "proxy":
 		if err := runProxy(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+	case "probe":
+		if err := runProbe(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -874,10 +881,107 @@ func configPathFromArgs(args []string) string {
 	return config.DefaultPath()
 }
 
+func runProbe(args []string) error {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var url string
+	var apiKey string
+	var jsonOutput bool
+
+	fs.StringVar(&url, "url", "http://127.0.0.1:39001", "proxy URL")
+	fs.StringVar(&apiKey, "key", "", "API key (or set GODEX_API_KEY)")
+	fs.BoolVar(&jsonOutput, "json", false, "output as JSON")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: godex probe <model> [--url URL] [--key KEY] [--json]")
+	}
+	model := fs.Arg(0)
+
+	// Get API key from env if not provided
+	if apiKey == "" {
+		apiKey = os.Getenv("GODEX_API_KEY")
+	}
+	if apiKey == "" {
+		return fmt.Errorf("API key required: use --key or set GODEX_API_KEY")
+	}
+
+	// Build request URL
+	reqURL := strings.TrimRight(url, "/") + "/v1/models/" + model
+
+	// Make request
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		if jsonOutput {
+			fmt.Printf(`{"status":"not_found","model":%q}%s`, model, "\n")
+		} else {
+			fmt.Printf("ERROR: model %q not found\n", model)
+		}
+		os.Exit(1)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var result struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name,omitempty"`
+		Backend     string `json:"backend,omitempty"`
+		Alias       string `json:"alias,omitempty"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	if jsonOutput {
+		fmt.Println(string(body))
+	} else {
+		// Human-readable output
+		if result.Alias != "" {
+			fmt.Printf("OK: %s → %s", result.Alias, result.ID)
+		} else {
+			fmt.Printf("OK: %s", result.ID)
+		}
+		if result.Backend != "" {
+			fmt.Printf(" (%s)", result.Backend)
+		}
+		if result.DisplayName != "" {
+			fmt.Printf(" [%s]", result.DisplayName)
+		}
+		fmt.Println()
+	}
+
+	return nil
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: godex exec --config <path> --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
 	fmt.Fprintln(os.Stderr, "       godex proxy --config <path> --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
 	fmt.Fprintln(os.Stderr, "       godex proxy keys --config <path> add --label <label> [--rate 60/m] [--burst 10] [--quota-tokens N]")
 	fmt.Fprintln(os.Stderr, "       godex proxy keys list | update <id> | revoke <id|key> | rotate <id|key>")
 	fmt.Fprintln(os.Stderr, "       godex proxy usage --config <path> list [--since 24h] [--key <id>] | show <id>")
+	fmt.Fprintln(os.Stderr, "       godex probe <model> [--url http://127.0.0.1:39001] [--key <api-key>] [--json]")
 }

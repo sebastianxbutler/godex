@@ -4,6 +4,7 @@ Godex exposes these primary commands:
 
 - `godex exec` — run a single Responses API call (supports tools + streaming)
 - `godex proxy` — run an OpenAI‑compatible proxy server
+- `godex probe` — check if a model exists and get routing info
 - `godex version` / `--version` — show build version
 
 Config:
@@ -109,6 +110,33 @@ Useful flags:
 - `--meter-window <duration>` — usage window (e.g., 24h)
 
 See `docs/proxy.md` for full proxy documentation, including L402 payment flows.
+
+## `godex probe`
+
+Check if a model exists and which backend would handle it.
+
+```bash
+# Check a model (human-readable)
+godex probe sonnet
+# OK: sonnet → claude-sonnet-4-5-20250929 (anthropic) [Claude Sonnet 4.5]
+
+# JSON output
+godex probe o3-mini --json
+# {"id":"o3-mini","object":"model","owned_by":"godex","backend":"codex","display_name":"o3 Mini"}
+
+# Check non-existent model
+godex probe fake-model
+# ERROR: model "fake-model" not found
+```
+
+Flags:
+- `--url <url>` — proxy URL (default: `http://127.0.0.1:39001`)
+- `--key <key>` — API key (or set `GODEX_API_KEY` env var)
+- `--json` — output as JSON
+
+Exit codes:
+- `0` — model found
+- `1` — model not found or error
 
 ## Wire compliance
 Godex supports Wire flags for compatibility with multi‑provider runners:

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.2 - 2026-02-16
+### Added
+- **Model probe endpoint**: `GET /v1/models/{model_id}` returns model info or 404.
+- **`godex probe` CLI command**: Check if a model exists and get routing info.
+- Response includes `backend`, `display_name`, and `alias` fields.
+- Alias expansion: `sonnet` → `claude-sonnet-4-5-20250929`.
+
+### Example
+```bash
+godex probe sonnet --key $KEY
+# OK: sonnet → claude-sonnet-4-5-20250929 (anthropic) [Claude Sonnet 4.5]
+
+curl /v1/models/sonnet -H "Authorization: Bearer $KEY"
+# {"id":"claude-sonnet-4-5-20250929","backend":"anthropic","alias":"sonnet",...}
+```
+
 ## 0.5.1 - 2026-02-16
 ### Added
 - **Dynamic model discovery**: `/v1/models` now queries backends for available models.

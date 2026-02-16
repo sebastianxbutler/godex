@@ -36,6 +36,52 @@ curl http://127.0.0.1:39001/v1/pricing
 {"status":"disabled","message":"payments not enabled"}
 ```
 
+## Model probe
+
+Check if a model exists and get routing info:
+
+### Endpoint: `GET /v1/models/{model_id}`
+
+```bash
+curl http://127.0.0.1:39001/v1/models/sonnet -H "Authorization: Bearer $KEY"
+```
+
+Response:
+```json
+{
+  "id": "claude-sonnet-4-5-20250929",
+  "object": "model",
+  "owned_by": "godex",
+  "display_name": "Claude Sonnet 4.5",
+  "backend": "anthropic",
+  "alias": "sonnet"
+}
+```
+
+- **404** if model not found
+- **alias** field present if input was an alias
+- **backend** shows which backend handles the model
+
+### CLI: `godex probe`
+
+```bash
+# Check a model
+godex probe sonnet
+# OK: sonnet → claude-sonnet-4-5-20250929 (anthropic) [Claude Sonnet 4.5]
+
+# JSON output
+godex probe o3-mini --json
+# {"id":"o3-mini","object":"model","owned_by":"godex","backend":"codex"}
+
+# Custom proxy URL
+godex probe claude-opus-4-5 --url http://localhost:39001 --key $KEY
+```
+
+Options:
+- `--url` — proxy URL (default: `http://127.0.0.1:39001`)
+- `--key` — API key (or set `GODEX_API_KEY`)
+- `--json` — output as JSON
+
 ## Multi-model support
 
 Godex can serve multiple models. Configure in YAML:

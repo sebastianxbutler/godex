@@ -255,6 +255,7 @@ func Run(cfg Config) error {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/models/", s.handleModelByID) // must come before /v1/models
 	mux.HandleFunc("/v1/models", s.handleModels)
 	mux.HandleFunc("/v1/pricing", s.handlePricing)
 	mux.HandleFunc("/v1/responses", s.handleResponses)
@@ -360,6 +361,90 @@ func (s *Server) getCachedModels(ctx context.Context) []backend.ModelInfo {
 		s.cachedModelsTime = time.Now()
 	}
 	return models
+}
+
+// handleModelByID handles GET /v1/models/{model_id}
+func (s *Server) handleModelByID(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	key, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	if ok, _ := s.allowRequest(w, r, key); !ok {
+		return
+	}
+
+	// Extract model ID from path
+	modelID := strings.TrimPrefix(r.URL.Path, "/v1/models/")
+	if modelID == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("model ID required"))
+		s.logRequest(r, http.StatusBadRequest, start)
+		return
+	}
+
+	// Expand alias
+	expandedID := modelID
+	if s.router != nil {
+		expandedID = s.router.ExpandAlias(modelID)
+	}
+
+	// Check if model exists in cached models
+	models := s.getCachedModels(r.Context())
+	for _, m := range models {
+		if m.ID == expandedID || m.ID == modelID {
+			resp := OpenAIModelDetail{
+				ID:          m.ID,
+				Object:      "model",
+				OwnedBy:     "godex",
+				DisplayName: m.DisplayName,
+			}
+			// Include backend info if router available
+			if s.router != nil {
+				if be := s.router.BackendFor(m.ID); be != nil {
+					resp.Backend = be.Name()
+				}
+			}
+			// Note if this was an alias
+			if modelID != expandedID {
+				resp.Alias = modelID
+			}
+			writeJSON(w, http.StatusOK, resp)
+			s.logRequest(r, http.StatusOK, start)
+			return
+		}
+	}
+
+	// Check if router can handle this model (even if not in cached list)
+	if s.router != nil {
+		if be := s.router.BackendFor(expandedID); be != nil {
+			resp := OpenAIModelDetail{
+				ID:      expandedID,
+				Object:  "model",
+				OwnedBy: "godex",
+				Backend: be.Name(),
+			}
+			if modelID != expandedID {
+				resp.Alias = modelID
+			}
+			writeJSON(w, http.StatusOK, resp)
+			s.logRequest(r, http.StatusOK, start)
+			return
+		}
+	}
+
+	// Model not found
+	writeError(w, http.StatusNotFound, fmt.Errorf("model %q not found", modelID))
+	s.logRequest(r, http.StatusNotFound, start)
+}
+
+// OpenAIModelDetail is the response for GET /v1/models/{id}
+type OpenAIModelDetail struct {
+	ID          string `json:"id"`
+	Object      string `json:"object"`
+	OwnedBy     string `json:"owned_by"`
+	DisplayName string `json:"display_name,omitempty"`
+	Backend     string `json:"backend,omitempty"`
+	Alias       string `json:"alias,omitempty"`
 }
 
 func (s *Server) resolveModel(model string) (ModelEntry, bool) {
