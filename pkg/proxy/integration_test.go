@@ -265,6 +265,84 @@ func TestChatCompletionsToolCalls(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsToolResults tests that OpenAI tool result messages are translated.
+func TestChatCompletionsToolResults(t *testing.T) {
+	mock := &backend.MockBackend{
+		BackendName: "mock",
+		Response:    "The files in /tmp are: file1, file2, file3",
+	}
+
+	router := backend.NewRouter(backend.RouterConfig{Default: "mock"})
+	router.Register("mock", mock)
+
+	srv := &Server{
+		cfg: Config{
+			AllowAnyKey: true,
+		},
+		cache:    NewCache(0),
+		router:   router,
+		models:   map[string]ModelEntry{},
+		usage:    NewUsageStore("", "", 0, 0, 0, "", 0, 0),
+		limiters: NewLimiterStore("60/m", 10),
+		logger:   NewLogger(LogLevelInfo),
+	}
+
+	// This is the exact format that was failing: OpenAI tool result message
+	reqBody := OpenAIChatRequest{
+		Model: "gpt-5.2-codex",
+		Messages: []OpenAIChatMessage{
+			{Role: "user", Content: "List files in /tmp"},
+			{
+				Role: "assistant",
+				ToolCalls: []OpenAIChatToolCall{
+					{
+						ID:   "call_123",
+						Type: "function",
+						Function: OpenAIChatToolFunction{
+							Name:      "exec",
+							Arguments: `{"command":"ls /tmp"}`,
+						},
+					},
+				},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_123",
+				Content:    "file1\nfile2\nfile3",
+			},
+		},
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-key")
+
+	w := httptest.NewRecorder()
+	srv.handleChatCompletions(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var chatResp OpenAIChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(chatResp.Choices) == 0 {
+		t.Fatal("no choices in response")
+	}
+
+	// Should get a proper response, not an error about invalid role
+	content := chatResp.Choices[0].Message.Content
+	if content == "" {
+		t.Error("expected non-empty response content")
+	}
+}
+
 // TestModelAliasExpansion tests that model aliases are expanded.
 func TestModelAliasExpansion(t *testing.T) {
 	mock := &backend.MockBackend{BackendName: "mock", Response: "OK"}

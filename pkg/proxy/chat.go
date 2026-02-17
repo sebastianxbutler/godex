@@ -42,9 +42,36 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionKey := s.sessionKey(req.User, r)
-	items := make([]OpenAIItem, 0, len(req.Messages))
+	items := make([]OpenAIItem, 0, len(req.Messages)*2) // May expand due to tool_calls
 	for _, msg := range req.Messages {
-		items = append(items, OpenAIItem{Type: "message", Role: msg.Role, Content: msg.Content})
+		switch msg.Role {
+		case "tool":
+			// OpenAI tool result → Codex function_call_output
+			output := extractText(msg.Content)
+			items = append(items, OpenAIItem{
+				Type:   "function_call_output",
+				CallID: msg.ToolCallID,
+				Output: output,
+			})
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				// Assistant with tool_calls → Codex function_call items
+				for _, tc := range msg.ToolCalls {
+					items = append(items, OpenAIItem{
+						Type:      "function_call",
+						CallID:    tc.ID,
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					})
+				}
+			} else {
+				// Regular assistant message
+				items = append(items, OpenAIItem{Type: "message", Role: msg.Role, Content: msg.Content})
+			}
+		default:
+			// user, system, developer - pass through as messages
+			items = append(items, OpenAIItem{Type: "message", Role: msg.Role, Content: msg.Content})
+		}
 	}
 	input, system, err := buildSystemAndInput(sessionKey, items, s.cache)
 	if err != nil {
