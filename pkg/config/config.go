@@ -80,6 +80,14 @@ type ProxyConfig struct {
 	AdminSocket   string         `yaml:"admin_socket"`
 	Payments      PaymentsConfig `yaml:"payments"`
 	Backends      BackendsConfig `yaml:"backends"`
+	Metrics       MetricsConfig  `yaml:"metrics"`
+}
+
+// MetricsConfig configures per-backend metrics collection.
+type MetricsConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Path        string `yaml:"path"`         // persist metrics to file
+	LogRequests bool   `yaml:"log_requests"` // log individual requests
 }
 
 type PaymentsConfig struct {
@@ -90,9 +98,51 @@ type PaymentsConfig struct {
 
 // BackendsConfig configures available LLM backends.
 type BackendsConfig struct {
-	Codex     CodexBackendConfig     `yaml:"codex"`
-	Anthropic AnthropicBackendConfig `yaml:"anthropic"`
-	Routing   RoutingConfig          `yaml:"routing"`
+	Codex     CodexBackendConfig            `yaml:"codex"`
+	Anthropic AnthropicBackendConfig        `yaml:"anthropic"`
+	Custom    map[string]CustomBackendConfig `yaml:"custom"`
+	Routing   RoutingConfig                 `yaml:"routing"`
+}
+
+// CustomBackendConfig configures a user-defined OpenAI-compatible backend.
+type CustomBackendConfig struct {
+	Type      string              `yaml:"type"`      // "openai"
+	Enabled   *bool               `yaml:"enabled"`   // default true
+	BaseURL   string              `yaml:"base_url"`
+	Auth      BackendAuthConfig   `yaml:"auth"`
+	Timeout   time.Duration       `yaml:"timeout"`
+	Discovery *bool               `yaml:"discovery"` // auto-probe /v1/models
+	Models    []BackendModelDef   `yaml:"models"`    // hard-coded models
+}
+
+// IsEnabled returns true if the backend is enabled (default true).
+func (c CustomBackendConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// HasDiscovery returns true if model discovery is enabled.
+func (c CustomBackendConfig) HasDiscovery() bool {
+	if c.Discovery == nil {
+		return true // default to discovery if no models specified
+	}
+	return *c.Discovery
+}
+
+// BackendAuthConfig configures authentication for a custom backend.
+type BackendAuthConfig struct {
+	Type    string            `yaml:"type"`    // "api_key", "bearer", "header", "none"
+	Key     string            `yaml:"key"`     // literal key
+	KeyEnv  string            `yaml:"key_env"` // env var name for key
+	Headers map[string]string `yaml:"headers"` // custom headers (for type: header)
+}
+
+// BackendModelDef defines a model for hard-coded model lists.
+type BackendModelDef struct {
+	ID          string `yaml:"id"`
+	DisplayName string `yaml:"display_name"`
 }
 
 // CodexBackendConfig configures the Codex/ChatGPT backend.

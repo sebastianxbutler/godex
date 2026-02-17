@@ -10,6 +10,7 @@ Responses backend. It supports `/v1/responses`, `/v1/models`, and
 - `GET /v1/pricing`
 - `POST /v1/responses`
 - `POST /v1/chat/completions`
+- `GET /metrics`
 - `GET /health`
 
 ## Pricing endpoint
@@ -164,6 +165,129 @@ curl http://127.0.0.1:39001/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-sonnet-4-5-20250929","messages":[{"role":"user","content":"Hello"}]}'
 ```
+
+## Custom backends
+
+Godex supports user-defined OpenAI-compatible backends, allowing you to aggregate any provider that implements the OpenAI API.
+
+### Configuration
+
+```yaml
+proxy:
+  backends:
+    custom:
+      ollama:
+        type: openai
+        enabled: true
+        base_url: "http://localhost:11434/v1"
+        discovery: true  # auto-discover models
+        
+      groq:
+        type: openai
+        base_url: "https://api.groq.com/openai/v1"
+        auth:
+          type: api_key
+          key_env: "GROQ_API_KEY"
+          
+      vllm:
+        type: openai
+        base_url: "http://gpu-server:8000/v1"
+        discovery: false
+        models:  # hard-coded model list
+          - id: "vllm/llama-70b"
+            display_name: "Llama 70B"
+            
+    routing:
+      patterns:
+        ollama: ["llama-*", "phi-*", "qwen-*"]
+        groq: ["groq/*"]
+        vllm: ["vllm/*"]
+```
+
+### Auth types
+
+| Type | Description | Config |
+|------|-------------|--------|
+| `api_key` | Bearer token from env or literal | `key_env: "VAR"` or `key: "..."` |
+| `bearer` | Same as api_key | `key_env: "VAR"` |
+| `header` | Custom headers | `headers: {X-Key: "..."}` |
+| `none` | No auth (local endpoints) | (default) |
+
+### Model discovery
+
+- `discovery: true` — Queries `/v1/models` endpoint automatically
+- `discovery: false` + `models: [...]` — Uses hard-coded model list
+- If both specified, hard-coded list takes precedence
+
+### Example: Using a custom backend
+
+```bash
+# Use Ollama model
+curl http://127.0.0.1:39001/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"model":"llama-3.2-3b","messages":[{"role":"user","content":"Hello"}]}'
+
+# Use Groq model
+curl http://127.0.0.1:39001/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"model":"groq/llama-3.3-70b","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+## Metrics
+
+Godex can collect per-backend metrics for monitoring and debugging.
+
+### Configuration
+
+```yaml
+proxy:
+  metrics:
+    enabled: true
+    path: "~/.godex/metrics.jsonl"  # persist metrics
+    log_requests: true               # log individual requests
+```
+
+### Endpoint: `GET /metrics`
+
+```bash
+curl http://127.0.0.1:39001/metrics
+```
+
+Response:
+```json
+{
+  "backends": {
+    "codex": {
+      "backend": "codex",
+      "requests": 142,
+      "errors": 2,
+      "latency_p50_ms": 450,
+      "latency_p95_ms": 1200,
+      "latency_p99_ms": 2500,
+      "total_tokens": 50000,
+      "error_rate": 0.014
+    },
+    "anthropic": {
+      "backend": "anthropic",
+      "requests": 89,
+      "errors": 0,
+      "latency_p50_ms": 380,
+      "latency_p95_ms": 900,
+      "latency_p99_ms": 1800,
+      "total_tokens": 32000,
+      "error_rate": 0
+    }
+  }
+}
+```
+
+### Metrics collected
+
+- **requests**: Total request count
+- **errors**: Failed request count
+- **latency_p50/p95/p99**: Response time percentiles
+- **total_tokens**: Sum of input + output tokens
+- **error_rate**: Errors / requests
 
 ## Quick start
 

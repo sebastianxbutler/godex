@@ -19,6 +19,7 @@ type chatCallInfo struct {
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	var req OpenAIChatRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -41,9 +42,36 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionKey := s.sessionKey(req.User, r)
-	items := make([]OpenAIItem, 0, len(req.Messages))
+	items := make([]OpenAIItem, 0, len(req.Messages)*2) // May expand due to tool_calls
 	for _, msg := range req.Messages {
-		items = append(items, OpenAIItem{Type: "message", Role: msg.Role, Content: msg.Content})
+		switch msg.Role {
+		case "tool":
+			// OpenAI tool result → Codex function_call_output
+			output := extractText(msg.Content)
+			items = append(items, OpenAIItem{
+				Type:   "function_call_output",
+				CallID: msg.ToolCallID,
+				Output: output,
+			})
+		case "assistant":
+			if len(msg.ToolCalls) > 0 {
+				// Assistant with tool_calls → Codex function_call items
+				for _, tc := range msg.ToolCalls {
+					items = append(items, OpenAIItem{
+						Type:      "function_call",
+						CallID:    tc.ID,
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					})
+				}
+			} else {
+				// Regular assistant message
+				items = append(items, OpenAIItem{Type: "message", Role: msg.Role, Content: msg.Content})
+			}
+		default:
+			// user, system, developer - pass through as messages
+			items = append(items, OpenAIItem{Type: "message", Role: msg.Role, Content: msg.Content})
+		}
 	}
 	input, system, err := buildSystemAndInput(sessionKey, items, s.cache)
 	if err != nil {
@@ -70,15 +98,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Try router-based backend first, fall back to legacy client
 	be := s.backendForModel(req.Model)
+	backendName := "codex-legacy"
 	if be == nil {
 		// Fall back to legacy Codex client
 		cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
 		be = &legacyClientBackend{client: cl}
+	} else {
+		backendName = be.Name()
 	}
 
 	if !req.Stream {
 		result, err := be.StreamAndCollect(r.Context(), codexReq)
 		if err != nil {
+			s.recordMetric(backendName, req.Model, start, "error", err.Error(), nil)
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
@@ -86,6 +118,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		resp := chatResponseFromBackendResult(req.Model, result)
 		writeJSON(w, http.StatusOK, resp)
 		s.recordUsage(r, key, http.StatusOK, nil)
+		s.recordMetric(backendName, req.Model, start, "ok", "", result.Usage)
 		return
 	}
 
@@ -218,6 +251,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		s.recordMetric(backendName, req.Model, start, "error", err.Error(), nil)
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
@@ -243,6 +277,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
 	s.recordUsage(r, key, http.StatusOK, usage)
+	s.recordMetric(backendName, req.Model, start, "ok", "", usage)
 }
 
 func chatResponseFromResult(model string, result client.StreamResult) OpenAIChatResponse {

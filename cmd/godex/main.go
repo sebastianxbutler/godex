@@ -630,11 +630,17 @@ func runProxy(args []string) error {
 				CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
 				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
 			},
+			Custom: cfg.Proxy.Backends.Custom,
 			Routing: proxy.RoutingConfig{
 				Default:  cfg.Proxy.Backends.Routing.Default,
 				Patterns: cfg.Proxy.Backends.Routing.Patterns,
 				Aliases:  cfg.Proxy.Backends.Routing.Aliases,
 			},
+		},
+		Metrics: proxy.MetricsConfig{
+			Enabled:     cfg.Proxy.Metrics.Enabled,
+			Path:        cfg.Proxy.Metrics.Path,
+			LogRequests: cfg.Proxy.Metrics.LogRequests,
 		},
 	}
 	return proxy.Run(proxyCfg)

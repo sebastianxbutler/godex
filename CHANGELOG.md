@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.6 - 2026-02-17
+### Fixed
+- **Tool results in `/v1/chat/completions`**: OpenAI-format `role: "tool"` messages are now properly translated to Codex's native `function_call_output` format. Previously, these were passed through unchanged, causing "Invalid value: 'tool'" errors from the Codex backend.
+- Assistant messages with `tool_calls` arrays are now converted to `function_call` items.
+
+### Added
+- `ToolCallID` field in `OpenAIChatMessage` struct for proper tool result handling.
+- Integration test for multi-turn tool interactions.
+
 ## 0.5.5 - 2026-02-16
 ### Added
 - **Automatic Anthropic OAuth token refresh**: Expired tokens are now refreshed automatically using the refresh token. No manual `claude auth login` required!
