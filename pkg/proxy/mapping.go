@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"godex/pkg/protocol"
@@ -87,15 +88,19 @@ func buildSystemAndInput(sessionKey string, items []OpenAIItem, cache *Cache) ([
 				return nil, "", errors.New("function_call_output missing call_id")
 			}
 			if !seenCalls[item.CallID] {
-				if cache == nil {
-					return nil, "", fmt.Errorf("missing function_call for %s", item.CallID)
+				// Try to recover the function_call from cache
+				if cache != nil {
+					if call, ok := cache.GetToolCall(sessionKey, item.CallID); ok {
+						input = append(input, protocol.FunctionCallInput(call.Name, item.CallID, call.Arguments))
+						seenCalls[item.CallID] = true
+					}
 				}
-				call, ok := cache.GetToolCall(sessionKey, item.CallID)
-				if !ok {
-					return nil, "", fmt.Errorf("missing function_call for %s", item.CallID)
+				// If still not found, skip this orphaned tool result gracefully
+				// This handles aborted tool calls where transcript repair left orphaned results
+				if !seenCalls[item.CallID] {
+					log.Printf("[WARN] skipping orphaned function_call_output for %s", item.CallID)
+					continue
 				}
-				input = append(input, protocol.FunctionCallInput(call.Name, item.CallID, call.Arguments))
-				seenCalls[item.CallID] = true
 			}
 			input = append(input, protocol.FunctionCallOutputInput(item.CallID, item.Output))
 		default:

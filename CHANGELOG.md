@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.7 - 2026-02-17
+### Fixed
+- **Orphaned tool results no longer cause 400 errors**: When a tool call is aborted mid-stream and transcript repair leaves orphaned `function_call_output` items, godex now skips them gracefully with a warning instead of failing with "missing function_call for {id}". This prevents sessions from becoming permanently stuck after aborted tool calls.
+
+### Added
+- Unit tests for orphaned tool result handling in `mapping_test.go`.
+
 ## 0.5.6 - 2026-02-17
 ### Fixed
 - **Tool results in `/v1/chat/completions`**: OpenAI-format `role: "tool"` messages are now properly translated to Codex's native `function_call_output` format. Previously, these were passed through unchanged, causing "Invalid value: 'tool'" errors from the Codex backend.
