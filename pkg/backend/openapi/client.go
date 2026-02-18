@@ -1,7 +1,7 @@
-// Package openai implements a generic OpenAI-compatible backend.
+// Package openapi implements a generic OpenAI-compatible backend.
 // It translates between Codex Responses API format (used internally by godex)
 // and OpenAI Chat Completions format (used by most providers: Gemini, Groq, etc).
-package openai
+package openapi
 
 import (
 	"bytes"

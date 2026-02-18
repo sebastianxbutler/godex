@@ -17,7 +17,7 @@ import (
 	"godex/pkg/backend"
 	"godex/pkg/backend/anthropic"
 	"godex/pkg/backend/codex"
-	"godex/pkg/backend/openai"
+	"godex/pkg/backend/openapi"
 	"godex/pkg/client"
 	"godex/pkg/config"
 	"godex/pkg/metrics"
@@ -261,7 +261,7 @@ func Run(cfg Config) error {
 		if bcfg.Type != "openai" {
 			return fmt.Errorf("unknown backend type for %s: %s", name, bcfg.Type)
 		}
-		customClient, err := openai.New(openai.Config{
+		customClient, err := openapi.New(openapi.Config{
 			Name:      name,
 			BaseURL:   bcfg.BaseURL,
 			Auth:      bcfg.Auth,
