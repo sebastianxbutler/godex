@@ -737,7 +737,7 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 				Client:           wrapper,
 				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
 			})
-			r.Register("claude", h)
+			r.Register("anthropic", h)
 			registered++
 		}
 	}
