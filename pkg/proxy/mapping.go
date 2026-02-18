@@ -116,11 +116,16 @@ func buildSystemAndInput(sessionKey string, items []OpenAIItem, cache *Cache) ([
 				continue
 			}
 			if role != "" && strings.TrimSpace(text) != "" {
+				// Codex requires different content types for user vs assistant messages
+				contentType := "input_text"
+				if role == "assistant" {
+					contentType = "output_text"
+				}
 				input = append(input, protocol.ResponseInputItem{
 					Type: "message",
 					Role: role,
 					Content: []protocol.InputContentPart{{
-						Type: "input_text",
+						Type: contentType,
 						Text: text,
 					}},
 				})

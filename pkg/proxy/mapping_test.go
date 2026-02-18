@@ -72,6 +72,41 @@ func TestBuildSystemAndInput_ValidToolResult(t *testing.T) {
 	}
 }
 
+func TestBuildSystemAndInput_AssistantContentType(t *testing.T) {
+	// Verify that assistant messages use output_text, not input_text
+	// Codex rejects input_text for assistant role
+
+	items := []OpenAIItem{
+		{Type: "message", Role: "user", Content: "Hello"},
+		{Type: "message", Role: "assistant", Content: "Hi there!"},
+		{Type: "message", Role: "user", Content: "How are you?"},
+	}
+
+	input, _, err := buildSystemAndInput("test-session", items, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(input) != 3 {
+		t.Fatalf("expected 3 input items, got %d", len(input))
+	}
+
+	// User message should use input_text
+	if input[0].Content[0].Type != "input_text" {
+		t.Errorf("user message should use input_text, got %s", input[0].Content[0].Type)
+	}
+
+	// Assistant message should use output_text
+	if input[1].Content[0].Type != "output_text" {
+		t.Errorf("assistant message should use output_text, got %s", input[1].Content[0].Type)
+	}
+
+	// Second user message should use input_text
+	if input[2].Content[0].Type != "input_text" {
+		t.Errorf("user message should use input_text, got %s", input[2].Content[0].Type)
+	}
+}
+
 func TestBuildSystemAndInput_MissingCallID(t *testing.T) {
 	// Verify that function_call_output without call_id still errors
 	// (this is a malformed request, not an orphaned result)

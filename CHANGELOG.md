@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.8 - 2026-02-17
+### Fixed
+- **Assistant messages use correct content type**: Assistant messages now use `output_text` instead of `input_text` for their content. Codex rejects `input_text` for assistant role with "Invalid value: 'input_text'. Supported values are: 'output_text' and 'refusal'."
+
+### Added
+- Unit test for assistant message content type validation.
+
 ## 0.5.7 - 2026-02-17
 ### Fixed
 - **Orphaned tool results no longer cause 400 errors**: When a tool call is aborted mid-stream and transcript repair leaves orphaned `function_call_output` items, godex now skips them gracefully with a warning instead of failing with "missing function_call for {id}". This prevents sessions from becoming permanently stuck after aborted tool calls.
