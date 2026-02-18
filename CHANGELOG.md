@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 - 2026-02-18
+### Added
+- **Harness architecture**: Codex, Claude, and OpenAI-compatible harnesses with structured event streaming.
+- **Prompt system**: Provider-aware prompt injection (permissions, environment context, collaboration modes).
+- **Testing tools**: Harness mocks, event logger, and replay utilities.
+- **Model ownership in harnesses**: Each harness now owns model discovery, alias expansion, and model matching.
+
+### Changed
+- **Proxy routing** now delegates to harnesses instead of legacy backends.
+- **Router** simplified to use harness matching and user overrides only.
+- **Config defaults** removed for routing patterns/aliases (harnesses supply defaults).
+
+### Removed
+- **Legacy backend system** (`pkg/backend/`) removed entirely.
+
 ## 0.7.0 - 2026-02-18
 ### Added
 - **Multi-backend `godex exec`**: The CLI now supports all backends, not just Codex. Model name determines the backend automatically:
