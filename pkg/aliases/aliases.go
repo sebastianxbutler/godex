@@ -15,10 +15,11 @@ import (
 // The resolver queries the specified backend and picks the latest model
 // matching the prefix.
 type Rule struct {
-	Alias   string // e.g. "opus"
-	Prefix  string // e.g. "claude-opus-" — pick latest model starting with this
-	Suffix  string // optional suffix filter (e.g. "-codex")
-	Backend string // backend name to query (e.g. "anthropic", "gemini")
+	Alias   string   // e.g. "opus"
+	Prefix  string   // e.g. "claude-opus-" — pick latest model starting with this
+	Suffix  string   // optional suffix filter (e.g. "-codex")
+	Exclude []string // substrings to exclude from matches
+	Backend string   // backend name to query (e.g. "anthropic", "gemini")
 }
 
 // DefaultRules returns the built-in alias resolution rules.
@@ -34,8 +35,11 @@ func DefaultRules() []Rule {
 		{Alias: "flash", Prefix: "gemini-2.5-flash", Backend: "gemini"},
 
 		// Codex / GPT
-		{Alias: "codex", Prefix: "gpt-", Backend: "codex", Suffix: "-codex"},
-		{Alias: "gpt", Prefix: "gpt-", Backend: "codex"},
+		{Alias: "codex", Prefix: "gpt-", Backend: "codex", Suffix: "-codex", Exclude: []string{"-codex-mini", "-codex-max"}},
+		{Alias: "codex-mini", Prefix: "gpt-", Backend: "codex", Suffix: "-codex-mini"},
+		{Alias: "gpt", Prefix: "gpt-5", Backend: "codex", Exclude: []string{"-codex", "-mini", "-nano", "-pro", "-search", "-chat-"}},
+		{Alias: "gpt-mini", Prefix: "gpt-5-mini", Backend: "codex"},
+		{Alias: "gpt-pro", Prefix: "gpt-5", Backend: "codex", Suffix: "-pro"},
 	}
 }
 
@@ -91,7 +95,7 @@ func Resolve(ctx context.Context, backends map[string]backend.Backend, current m
 			modelCache[rule.Backend] = models
 		}
 
-		resolved := pickLatest(models, rule.Prefix, rule.Suffix)
+		resolved := pickLatest(models, rule.Prefix, rule.Suffix, rule.Exclude)
 		if resolved == "" {
 			res.Error = fmt.Sprintf("no model matching prefix %q", rule.Prefix)
 			res.Resolved = res.Previous
@@ -107,13 +111,20 @@ func Resolve(ctx context.Context, backends map[string]backend.Backend, current m
 // pickLatest finds the latest model matching the given prefix.
 // It sorts matching models lexicographically descending (higher version numbers
 // and later dates sort later) and returns the last one.
-func pickLatest(models []backend.ModelInfo, prefix, suffix string) string {
+func pickLatest(models []backend.ModelInfo, prefix, suffix string, exclude []string) string {
 	var matches []string
+outer:
 	for _, m := range models {
 		if strings.HasPrefix(m.ID, prefix) {
-			if suffix == "" || strings.HasSuffix(m.ID, suffix) {
-				matches = append(matches, m.ID)
+			if suffix != "" && !strings.HasSuffix(m.ID, suffix) {
+				continue
 			}
+			for _, ex := range exclude {
+				if strings.Contains(m.ID, ex) {
+					continue outer
+				}
+			}
+			matches = append(matches, m.ID)
 		}
 	}
 	if len(matches) == 0 {

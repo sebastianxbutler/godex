@@ -223,10 +223,23 @@ var knownCodexModels = []backend.ModelInfo{
 // If OPENAI_API_KEY is set, queries the OpenAI models API for live discovery.
 // Otherwise falls back to the hardcoded list.
 func (c *Client) ListModels(ctx context.Context) ([]backend.ModelInfo, error) {
-	if models, err := c.discoverModels(ctx); err == nil && len(models) > 0 {
-		return models, nil
+	discovered, err := c.discoverModels(ctx)
+	if err != nil || len(discovered) == 0 {
+		return knownCodexModels, nil
 	}
-	return knownCodexModels, nil
+	// Merge: union of discovered + static (static models may not be in public API)
+	seen := map[string]bool{}
+	var merged []backend.ModelInfo
+	for _, m := range discovered {
+		seen[m.ID] = true
+		merged = append(merged, m)
+	}
+	for _, m := range knownCodexModels {
+		if !seen[m.ID] {
+			merged = append(merged, m)
+		}
+	}
+	return merged, nil
 }
 
 // discoverModels queries the OpenAI public API if an API key is available.

@@ -15,17 +15,17 @@ func TestPickLatest(t *testing.T) {
 		{ID: "claude-sonnet-4-5-20250929"},
 	}
 
-	got := pickLatest(models, "claude-opus-", "")
+	got := pickLatest(models, "claude-opus-", "", nil)
 	if got != "claude-opus-4-6" {
 		t.Errorf("pickLatest = %q, want %q", got, "claude-opus-4-6")
 	}
 
-	got = pickLatest(models, "claude-sonnet-", "")
+	got = pickLatest(models, "claude-sonnet-", "", nil)
 	if got != "claude-sonnet-4-5-20250929" {
 		t.Errorf("pickLatest = %q, want %q", got, "claude-sonnet-4-5-20250929")
 	}
 
-	got = pickLatest(models, "nonexistent-", "")
+	got = pickLatest(models, "nonexistent-", "", nil)
 	if got != "" {
 		t.Errorf("pickLatest = %q, want empty", got)
 	}
@@ -36,7 +36,7 @@ func TestPickLatestExactMatch(t *testing.T) {
 		{ID: "gemini-2.5-pro"},
 		{ID: "gemini-2.5-flash"},
 	}
-	got := pickLatest(models, "gemini-2.5-pro", "")
+	got := pickLatest(models, "gemini-2.5-pro", "", nil)
 	if got != "gemini-2.5-pro" {
 		t.Errorf("pickLatest exact = %q, want %q", got, "gemini-2.5-pro")
 	}
@@ -51,12 +51,12 @@ func TestPickLatestWithSuffix(t *testing.T) {
 		{ID: "gpt-5.3"},
 	}
 	// With suffix filter
-	got := pickLatest(models, "gpt-", "-codex")
+	got := pickLatest(models, "gpt-", "-codex", nil)
 	if got != "gpt-5.3-codex" {
 		t.Errorf("pickLatest with suffix = %q, want %q", got, "gpt-5.3-codex")
 	}
 	// Without suffix — picks highest gpt-* alphabetically
-	got = pickLatest(models, "gpt-", "")
+	got = pickLatest(models, "gpt-", "", nil)
 	if got != "gpt-5.3-codex" {
 		t.Errorf("pickLatest no suffix = %q, want %q", got, "gpt-5.3-codex")
 	}
