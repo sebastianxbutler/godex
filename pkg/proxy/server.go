@@ -23,6 +23,7 @@ import (
 	"godex/pkg/metrics"
 	"godex/pkg/payments"
 	"godex/pkg/protocol"
+	"godex/pkg/router"
 	"godex/pkg/sse"
 )
 
@@ -68,6 +69,7 @@ type Config struct {
 	Payments        payments.Config
 	Backends        BackendsConfig
 	Metrics         MetricsConfig
+	HarnessRouter   *router.Router
 }
 
 // BackendsConfig configures available LLM backends.
@@ -120,6 +122,7 @@ type Server struct {
 	payments   payments.Gateway
 	models     map[string]ModelEntry
 	router     *backend.Router
+	harnessRouter *router.Router
 
 	// Model discovery cache
 	cachedModels      []backend.ModelInfo
@@ -303,6 +306,7 @@ func Run(cfg Config) error {
 		payments:       payGateway,
 		models:         models,
 		router:         router,
+		harnessRouter:  cfg.HarnessRouter,
 		metrics:        metricsCollector,
 		modelsCacheTTL: 5 * time.Minute, // Cache model list for 5 minutes
 	}
@@ -362,9 +366,19 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to get models from router with caching
+	// Try to get models from harness router first, then backend router
 	var data []OpenAIModel
-	if s.router != nil {
+	if s.harnessRouter != nil {
+		models := s.harnessRouter.AllModels(r.Context())
+		for _, m := range models {
+			data = append(data, OpenAIModel{
+				ID:      m.ID,
+				Object:  "model",
+				OwnedBy: "godex",
+			})
+		}
+	}
+	if len(data) == 0 && s.router != nil {
 		models := s.getCachedModels(r.Context())
 		for _, m := range models {
 			data = append(data, OpenAIModel{
@@ -505,14 +519,20 @@ func (s *Server) resolveModel(model string) (ModelEntry, bool) {
 	if model == "" {
 		model = s.cfg.Model
 	}
-	// Expand alias if configured
-	if s.router != nil {
+	// Expand alias if configured (try harness router first, then backend router)
+	if s.harnessRouter != nil {
+		model = s.harnessRouter.ExpandAlias(model)
+	} else if s.router != nil {
 		model = s.router.ExpandAlias(model)
 	}
 	if m, ok := s.models[model]; ok {
 		return m, true
 	}
-	// If router has a backend for this model, allow it
+	// If harness router has a harness for this model, allow it
+	if s.harnessRouter != nil && s.harnessRouter.HarnessFor(model) != nil {
+		return ModelEntry{ID: model, BaseURL: ""}, true
+	}
+	// If backend router has a backend for this model, allow it
 	if s.router != nil && s.router.BackendFor(model) != nil {
 		return ModelEntry{ID: model, BaseURL: ""}, true
 	}
@@ -597,6 +617,41 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		PromptCacheKey:    sessionKey,
 	}
 
+	// Try harness-based routing first
+	if h := s.harnessForModel(req.Model); h != nil {
+		turn := buildTurnFromResponses(req.Model, instructions, input, tools, nil)
+		var auditReqJSON json.RawMessage
+		if s.audit != nil {
+			auditReqJSON, _ = json.Marshal(req)
+		}
+
+		if !stream {
+			s.harnessResponsesNonStream(requestContext(r), w, h, turn, req.Model, key, start, auditReqJSON, sessionKey)
+			s.logRequest(r, http.StatusOK, start)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, errNoFlusher)
+			s.logRequest(r, http.StatusInternalServerError, start)
+			return
+		}
+		if err := s.harnessResponsesStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, auditReqJSON, sessionKey); err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			s.logRequest(r, http.StatusBadGateway, start)
+			return
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+		s.logRequest(r, http.StatusOK, start)
+		return
+	}
+
+	// Legacy backend path
 	cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
 	if !stream {
 		result, err := cl.StreamAndCollect(requestContext(r), codexReq)

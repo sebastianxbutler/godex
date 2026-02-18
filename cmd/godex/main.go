@@ -20,12 +20,16 @@ import (
 	"godex/pkg/auth"
 	"godex/pkg/backend"
 	"godex/pkg/backend/anthropic"
-	"godex/pkg/backend/codex"
+	backendCodex "godex/pkg/backend/codex"
 	"godex/pkg/backend/openapi"
 	"godex/pkg/config"
+	harnessClaudeP "godex/pkg/harness/claude"
+	harnessCodexP "godex/pkg/harness/codex"
+	harnessOpenaiP "godex/pkg/harness/openai"
 	"godex/pkg/payments"
 	"godex/pkg/protocol"
 	"godex/pkg/proxy"
+	"godex/pkg/router"
 	"godex/pkg/sse"
 )
 
@@ -667,7 +671,109 @@ func runProxy(args []string) error {
 		}
 	}
 
+	// Build harness router
+	harnessRouter := buildHarnessRouter(cfg, proxyCfg)
+	if harnessRouter != nil {
+		proxyCfg.HarnessRouter = harnessRouter
+	}
+
 	return proxy.Run(proxyCfg)
+}
+
+// buildHarnessRouter creates a harness router with all configured providers.
+func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router {
+	// Build routing config from proxy config
+	routingCfg := router.Config{
+		Default:  proxyCfg.Backends.Routing.Default,
+		Patterns: proxyCfg.Backends.Routing.Patterns,
+		Aliases:  proxyCfg.Backends.Routing.Aliases,
+	}
+	if routingCfg.Default == "" {
+		routingCfg.Default = "codex"
+	}
+	if routingCfg.Patterns == nil {
+		defaults := router.DefaultConfig()
+		routingCfg.Patterns = defaults.Patterns
+	}
+	if routingCfg.Aliases == nil {
+		defaults := router.DefaultConfig()
+		routingCfg.Aliases = defaults.Aliases
+	}
+
+	r := router.New(routingCfg)
+	registered := 0
+
+	// Register Codex harness
+	if cfg.Proxy.Backends.Codex.Enabled {
+		baseURL := cfg.Proxy.Backends.Codex.BaseURL
+		if baseURL == "" {
+			baseURL = proxyCfg.BaseURL
+		}
+		// We need an auth store for the codex client
+		authPath := cfg.Auth.Path
+		if authPath == "" {
+			authPath, _ = auth.DefaultPath()
+		}
+		store, err := auth.Load(authPath)
+		if err == nil {
+			codexClient := backendCodex.New(nil, store, backendCodex.Config{
+				BaseURL:      baseURL,
+				Originator:   proxyCfg.Originator,
+				UserAgent:    proxyCfg.UserAgent,
+				AllowRefresh: proxyCfg.AllowRefresh,
+			})
+			h := harnessCodexP.New(harnessCodexP.Config{
+				Client: codexClient,
+			})
+			r.Register("codex", h)
+			registered++
+		}
+	}
+
+	// Register Claude harness
+	if cfg.Proxy.Backends.Anthropic.Enabled {
+		anthTokens := anthropic.NewTokenStore(cfg.Proxy.Backends.Anthropic.CredentialsPath)
+		if err := anthTokens.Load(); err == nil {
+			wrapper := harnessClaudeP.NewClientWrapper(anthTokens, harnessClaudeP.ClientConfig{
+				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+			})
+			h := harnessClaudeP.New(harnessClaudeP.Config{
+				Client:       wrapper,
+				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+			})
+			r.Register("claude", h)
+			registered++
+		}
+	}
+
+	// Register custom OpenAI-compatible harnesses
+	for name, bcfg := range cfg.Proxy.Backends.Custom {
+		if !bcfg.IsEnabled() || bcfg.Type != "openai" {
+			continue
+		}
+		oaiClient, err := openapi.New(openapi.Config{
+			Name:      name,
+			BaseURL:   bcfg.BaseURL,
+			Auth:      bcfg.Auth,
+			Timeout:   bcfg.Timeout,
+			Discovery: bcfg.HasDiscovery(),
+			Models:    bcfg.Models,
+		})
+		if err != nil {
+			continue
+		}
+		wrapper := harnessOpenaiP.NewClientWrapper(oaiClient)
+		h := harnessOpenaiP.New(harnessOpenaiP.Config{
+			Client: wrapper,
+		})
+		r.Register(name, h)
+		registered++
+	}
+
+	if registered == 0 {
+		return nil
+	}
+	return r
 }
 
 func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.Config) error {
@@ -677,7 +783,7 @@ func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.
 	backends := map[string]backend.Backend{}
 
 	if cfg.Proxy.Backends.Codex.Enabled {
-		codexBe := codex.New(nil, nil, codex.Config{})
+		codexBe := backendCodex.New(nil, nil, backendCodex.Config{})
 		backends["codex"] = codexBe
 	}
 
@@ -1396,7 +1502,7 @@ func resolveBackend(model string, store *auth.Store, cfg config.Config, allowRef
 	if baseURL == "" {
 		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
-	c := codex.New(nil, store, codex.Config{
+	c := backendCodex.New(nil, store, backendCodex.Config{
 		SessionID:    sessionID,
 		AllowRefresh: allowRefresh,
 		BaseURL:      baseURL,
@@ -1468,7 +1574,7 @@ func runAliasesUpdate(args []string) error {
 
 		// Codex (uses OpenAI API for discovery if OPENAI_API_KEY is set, else static list)
 	if cfg.Proxy.Backends.Codex.Enabled {
-		codexBe := codex.New(nil, nil, codex.Config{})
+		codexBe := backendCodex.New(nil, nil, backendCodex.Config{})
 		backends["codex"] = codexBe
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"godex/pkg/backend"
 	"godex/pkg/client"
+	"godex/pkg/harness"
 	"godex/pkg/protocol"
 	"godex/pkg/sse"
 )
@@ -94,6 +95,41 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Stream:            true,
 		Include:           []string{},
 		PromptCacheKey:    sessionKey,
+	}
+
+	// Try harness-based routing first
+	if h := s.harnessForModel(req.Model); h != nil {
+		turn := buildTurnFromChat(req.Model, instructions, input, tools)
+		if !req.Stream {
+			result, err := h.StreamAndCollect(requestContext(r), turn)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, err)
+				return
+			}
+			calls := map[string]ToolCall{}
+			for _, tc := range result.ToolCalls {
+				calls[tc.CallID] = ToolCall{Name: tc.Name, Arguments: tc.Arguments}
+			}
+			s.cache.SaveToolCalls(sessionKey, calls)
+			resp := harnessResultToChatResponse(req.Model, result)
+			writeJSON(w, http.StatusOK, resp)
+			s.recordUsage(r, key, http.StatusOK, nil)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, errNoFlusher)
+			return
+		}
+		if err := s.harnessChatStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, sessionKey); err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		return
 	}
 
 	// Try router-based backend first, fall back to legacy client
@@ -324,6 +360,41 @@ func toolCallsFromCollector(callInfo map[string]chatCallInfo, collector *sse.Col
 		out[callID] = ToolCall{Name: info.name, Arguments: args[callID]}
 	}
 	return out
+}
+
+// harnessResultToChatResponse converts a harness.TurnResult to OpenAI chat response.
+func harnessResultToChatResponse(model string, result *harness.TurnResult) OpenAIChatResponse {
+	resp := OpenAIChatResponse{
+		ID:      newResponseID("chatcmpl"),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: []OpenAIChatChoice{{
+			Index: 0,
+			Message: OpenAIChatMessage{
+				Role:    "assistant",
+				Content: result.FinalText,
+			},
+			FinishReason: "stop",
+		}},
+	}
+	if len(result.ToolCalls) > 0 {
+		calls := make([]OpenAIChatToolCall, 0, len(result.ToolCalls))
+		for _, call := range result.ToolCalls {
+			calls = append(calls, OpenAIChatToolCall{
+				ID:   call.CallID,
+				Type: "function",
+				Function: OpenAIChatToolFunction{
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				},
+			})
+		}
+		resp.Choices[0].Message.ToolCalls = calls
+		resp.Choices[0].Message.Content = ""
+		resp.Choices[0].FinishReason = "tool_calls"
+	}
+	return resp
 }
 
 // chatResponseFromBackendResult converts a backend.StreamResult to OpenAI chat response.
