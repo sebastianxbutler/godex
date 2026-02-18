@@ -108,6 +108,7 @@ func runExec(args []string) error {
 	var inputJSON string
 	var mock bool
 	var mockMode string
+	var nativeTools bool
 	var tools toolFlags
 	var outputs outputFlags
 	var sessionID string
@@ -138,6 +139,7 @@ func runExec(args []string) error {
 	fs.StringVar(&logRequests, "log-requests", "", "Write JSON request payload to file")
 	fs.StringVar(&logResponses, "log-responses", "", "Append JSONL response events to file")
 	fs.StringVar(&providerKey, "provider-key", "", "API key for non-Codex backends (or set via env per provider)")
+	fs.BoolVar(&nativeTools, "native-tools", false, "Use Codex native tools (shell, apply_patch, update_plan) instead of proxy mode")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -199,6 +201,54 @@ func runExec(args []string) error {
 		}
 	}
 
+	// Build the harness Turn from exec args
+	turn := &harness.Turn{
+		Model:        model,
+		Instructions: instructions,
+	}
+	// Convert input items to harness messages
+	for _, item := range inputItems {
+		switch item.Type {
+		case "message":
+			text := ""
+			for _, part := range item.Content {
+				text += part.Text
+			}
+			turn.Messages = append(turn.Messages, harness.Message{
+				Role:    item.Role,
+				Content: text,
+			})
+		case "function_call":
+			turn.Messages = append(turn.Messages, harness.Message{
+				Role:    "assistant",
+				Content: item.Arguments,
+				Name:    item.Name,
+				ToolID:  item.CallID,
+			})
+		case "function_call_output":
+			turn.Messages = append(turn.Messages, harness.Message{
+				Role:    "tool",
+				Content: item.Output,
+				ToolID:  item.CallID,
+			})
+		}
+	}
+	// Convert tool specs to harness format
+	for _, t := range toolSpecs {
+		if t.Type == "function" {
+			var params map[string]any
+			if t.Parameters != nil {
+				_ = json.Unmarshal(t.Parameters, &params)
+			}
+			turn.Tools = append(turn.Tools, harness.ToolSpec{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  params,
+			})
+		}
+	}
+
+	// Build protocol request for mock/logging
 	req := protocol.ResponsesRequest{
 		Model:             model,
 		Instructions:      instructions,
@@ -222,11 +272,24 @@ func runExec(args []string) error {
 		return emitMockStream(req, jsonOnly, logResponses, mockMode)
 	}
 
-	// Resolve backend client based on model name
-	client, err := resolveClient(model, store, cfg, allowRefresh, sessionID, providerKey)
-	if err != nil {
-		return err
+	// Build the Codex harness
+	baseURL := cfg.Client.BaseURL
+	if baseURL == "" {
+		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
+	codexClient := harnessCodexP.NewClient(nil, store, harnessCodexP.ClientConfig{
+		SessionID:    sessionID,
+		AllowRefresh: allowRefresh,
+		BaseURL:      baseURL,
+		Originator:   cfg.Client.Originator,
+		UserAgent:    cfg.Client.UserAgent,
+		RetryMax:     cfg.Client.RetryMax,
+		RetryDelay:   cfg.Client.RetryDelay,
+	})
+	h := harnessCodexP.New(harnessCodexP.Config{
+		Client:      codexClient,
+		NativeTools: nativeTools,
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Exec.Timeout)
 	defer cancel()
@@ -241,62 +304,58 @@ func runExec(args []string) error {
 		if err != nil {
 			return err
 		}
-		handler := staticToolHandler{outputs: outputs}
-		result, err := client.RunToolLoop(ctx, req, handler, harnessCodexP.ToolLoopOptions{MaxSteps: cfg.Exec.AutoToolsMax})
+		handler := execToolHandler{outputs: outputs}
+		result, err := h.RunToolLoop(ctx, turn, handler, harness.LoopOptions{MaxTurns: cfg.Exec.AutoToolsMax})
 		if err != nil {
 			return err
 		}
 		if !jsonOnly {
-			fmt.Print(result.Text)
+			fmt.Print(result.FinalText)
 		}
 		return nil
 	}
 
-	collector := sse.NewCollector()
-	return client.StreamResponses(ctx, req, func(ev sse.Event) error {
-		collector.Observe(ev.Value)
+	return h.StreamTurn(ctx, turn, func(ev harness.Event) error {
 		if logResponses != "" {
 			if f, err := os.OpenFile(logResponses, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
-				_, _ = f.Write(append(ev.Raw, '\n'))
+				buf, _ := json.Marshal(ev)
+				_, _ = f.Write(append(buf, '\n'))
 				_ = f.Close()
 			}
 		}
 		if jsonOnly {
-			switch ev.Value.Type {
-			case "error":
-				message := extractErrorMessage(ev.Raw)
-				if message == "" {
-					message = "stream error"
+			switch ev.Kind {
+			case harness.EventError:
+				errMsg := "unknown error"
+				if ev.Error != nil {
+					errMsg = ev.Error.Message
 				}
 				payload := struct {
 					Type    string `json:"type"`
 					Message string `json:"message"`
-				}{Type: "error", Message: message}
+				}{Type: "error", Message: errMsg}
 				buf, _ := json.Marshal(payload)
 				fmt.Println(string(buf))
 				return nil
-			case "response.output_item.done":
-				if ev.Value.Item != nil && ev.Value.Item.Type == "function_call" {
-					if ev.Value.Item.Arguments == "" {
-						ev.Value.Item.Arguments = collector.FunctionArgs(ev.Value.Item.CallID)
-					}
-					buf, _ := json.Marshal(ev.Value)
+			case harness.EventToolCall:
+				if ev.ToolCall != nil {
+					buf, _ := json.Marshal(ev)
 					fmt.Println(string(buf))
-					return nil
 				}
+				return nil
 			}
-			fmt.Println(string(ev.Raw))
+			buf, _ := json.Marshal(ev)
+			fmt.Println(string(buf))
 			return nil
 		}
 		if trace {
-			fmt.Println(string(ev.Raw))
+			buf, _ := json.Marshal(ev)
+			fmt.Println(string(buf))
 		}
-		switch ev.Value.Type {
-		case "response.output_text.delta":
-			fmt.Print(ev.Value.Delta)
-		case "response.content_part.added":
-			if ev.Value.Part != nil && ev.Value.Part.Type == "output_text" {
-				fmt.Print(ev.Value.Part.Text)
+		switch ev.Kind {
+		case harness.EventText:
+			if ev.Text != nil {
+				fmt.Print(ev.Text.Delta)
 			}
 		}
 		return nil
@@ -549,6 +608,7 @@ func runProxy(args []string) error {
 	var eventsBackups int
 	var meterWindow string
 	var syncAliases bool
+	var proxyNativeTools bool
 
 	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	fs.StringVar(&listen, "listen", cfg.Proxy.Listen, "Listen address")
@@ -576,6 +636,7 @@ func runProxy(args []string) error {
 	fs.IntVar(&eventsBackups, "events-max-backups", cfg.Proxy.EventsBackups, "Max rotated events files to keep")
 	fs.StringVar(&meterWindow, "meter-window", cfg.Proxy.MeterWindow.String(), "Metering window duration (e.g. 24h); empty disables window")
 	fs.BoolVar(&syncAliases, "sync-aliases", false, "Update model aliases from providers on startup")
+	fs.BoolVar(&proxyNativeTools, "native-tools", cfg.Proxy.Backends.Codex.NativeTools, "Use Codex native tools (shell, apply_patch) instead of proxy mode")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -661,6 +722,10 @@ func runProxy(args []string) error {
 			Path:        cfg.Proxy.Metrics.Path,
 			LogRequests: cfg.Proxy.Metrics.LogRequests,
 		},
+	}
+	// Apply CLI flag overrides to config
+	if proxyNativeTools {
+		cfg.Proxy.Backends.Codex.NativeTools = true
 	}
 	if syncAliases {
 		if err := syncAliasesOnStartup(cfg, *configPath, &proxyCfg); err != nil {
