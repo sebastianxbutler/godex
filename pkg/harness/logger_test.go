@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWithLoggerStreamTurn(t *testing.T) {
@@ -151,6 +152,67 @@ func TestWithLoggerStreamError(t *testing.T) {
 	data, _ := os.ReadFile(files[0])
 	if !strings.Contains(string(data), "injected failure") {
 		t.Error("turn_end should contain error")
+	}
+}
+
+func TestWithLoggerRunToolLoop(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{NewTextEvent("result"), NewDoneEvent()}
+	inner := NewMock(MockConfig{Responses: [][]Event{events}})
+	logged := WithLogger(inner, LoggerConfig{Dir: dir})
+
+	handler := &testHandler{results: map[string]*ToolResultEvent{}}
+	result, err := logged.RunToolLoop(context.Background(), &Turn{}, handler, LoopOptions{MaxTurns: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FinalText != "result" {
+		t.Errorf("expected 'result', got %q", result.FinalText)
+	}
+}
+
+func TestWithLoggerStreamAndCollectToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		NewTextEvent("hi"),
+		NewToolCallEvent("c1", "shell", "{}"),
+		{Kind: EventText, Timestamp: events_now(), Text: &TextEvent{Complete: "final"}},
+		NewUsageEvent(50, 25),
+		NewDoneEvent(),
+	}
+	inner := NewMock(MockConfig{Responses: [][]Event{events}})
+	logged := WithLogger(inner, LoggerConfig{Dir: dir})
+
+	result, err := logged.StreamAndCollect(context.Background(), &Turn{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FinalText != "final" {
+		t.Errorf("expected 'final', got %q", result.FinalText)
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Errorf("expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.Usage == nil || result.Usage.InputTokens != 50 {
+		t.Error("usage not collected")
+	}
+}
+
+func events_now() time.Time { return time.Now() }
+
+func TestWithLoggerRedactNoUserContext(t *testing.T) {
+	dir := t.TempDir()
+	inner := NewMock(MockConfig{Responses: [][]Event{{NewDoneEvent()}}})
+	logged := WithLogger(inner, LoggerConfig{Dir: dir, Redact: true})
+
+	turn := &Turn{Instructions: "short"}
+	logged.StreamTurn(context.Background(), turn, func(Event) error { return nil })
+
+	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	data, _ := os.ReadFile(files[0])
+	// Short instructions should not be redacted
+	if !strings.Contains(string(data), "short") {
+		t.Error("short instructions should be preserved")
 	}
 }
 
