@@ -118,10 +118,17 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 		model = h.defaultModel
 	}
 
-	// Build the system prompt
-	instructions, err := BuildSystemPrompt(turn)
-	if err != nil {
-		return protocol.ResponsesRequest{}, err
+	// Build the system prompt. When caller provides tools (proxy pass-through),
+	// use their instructions directly without layering Codex defaults.
+	var instructions string
+	if len(turn.Tools) > 0 && turn.Instructions != "" {
+		instructions = turn.Instructions
+	} else {
+		var err error
+		instructions, err = BuildSystemPrompt(turn)
+		if err != nil {
+			return protocol.ResponsesRequest{}, err
+		}
 	}
 
 	// Convert messages to protocol input items
@@ -148,8 +155,25 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 		}
 	}
 
-	// Build tools
-	tools := DefaultTools()
+	// Build tools: use caller-provided tools when present (proxy pass-through),
+	// otherwise fall back to the default Codex tool set.
+	var tools []protocol.ToolSpec
+	if len(turn.Tools) > 0 {
+		for _, t := range turn.Tools {
+			var params json.RawMessage
+			if t.Parameters != nil {
+				params, _ = json.Marshal(t.Parameters)
+			}
+			tools = append(tools, protocol.ToolSpec{
+				Type:        "function",
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  params,
+			})
+		}
+	} else {
+		tools = DefaultTools()
+	}
 
 	// Add reasoning config
 	var reasoning *protocol.Reasoning
