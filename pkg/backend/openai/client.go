@@ -1,4 +1,6 @@
 // Package openai implements a generic OpenAI-compatible backend.
+// It translates between Codex Responses API format (used internally by godex)
+// and OpenAI Chat Completions format (used by most providers: Gemini, Groq, etc).
 package openai
 
 import (
@@ -34,10 +36,9 @@ type Config struct {
 type Client struct {
 	httpClient *http.Client
 	cfg        Config
-	apiKey     string // resolved from config
+	apiKey     string
 }
 
-// Ensure Client implements Backend interface.
 var _ backend.Backend = (*Client)(nil)
 
 // New creates a new OpenAI-compatible client.
@@ -48,21 +49,16 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = defaultTimeout
 	}
-
 	c := &Client{
 		httpClient: &http.Client{Timeout: cfg.Timeout},
 		cfg:        cfg,
 	}
-
-	// Resolve API key from config
 	if err := c.resolveAuth(); err != nil {
 		return nil, err
 	}
-
 	return c, nil
 }
 
-// resolveAuth resolves authentication from config.
 func (c *Client) resolveAuth() error {
 	switch c.cfg.Auth.Type {
 	case "api_key", "bearer":
@@ -72,7 +68,7 @@ func (c *Client) resolveAuth() error {
 				return fmt.Errorf("environment variable %s not set", c.cfg.Auth.KeyEnv)
 			}
 		} else if c.cfg.Auth.Key != "" {
-			c.apiKey = c.resolveEnvVars(c.cfg.Auth.Key)
+			c.apiKey = os.Expand(c.cfg.Auth.Key, os.Getenv)
 		}
 	case "header", "none", "":
 		// No API key needed
@@ -82,24 +78,154 @@ func (c *Client) resolveAuth() error {
 	return nil
 }
 
-// resolveEnvVars replaces ${VAR} patterns with environment values.
-func (c *Client) resolveEnvVars(s string) string {
-	return os.Expand(s, os.Getenv)
+func (c *Client) Name() string { return c.cfg.Name }
+
+// ---------------------------------------------------------------------------
+// Chat Completions types (OpenAI wire format)
+// ---------------------------------------------------------------------------
+
+type chatRequest struct {
+	Model    string        `json:"model"`
+	Messages []chatMessage `json:"messages"`
+	Tools    []chatTool    `json:"tools,omitempty"`
+	Stream   bool          `json:"stream"`
 }
 
-// Name returns the backend identifier.
-func (c *Client) Name() string {
-	return c.cfg.Name
+type chatMessage struct {
+	Role       string         `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
-// StreamResponses sends a request and streams events back via the callback.
+type chatTool struct {
+	Type     string       `json:"type"`
+	Function chatFunction `json:"function"`
+}
+
+type chatFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type chatToolCall struct {
+	Index    int              `json:"index"`
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function chatFunctionCall `json:"function"`
+}
+
+type chatFunctionCall struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+}
+
+// chatChunk is the SSE delta from a streaming chat completion.
+type chatChunk struct {
+	ID      string `json:"id"`
+	Choices []struct {
+		Index int `json:"index"`
+		Delta struct {
+			Role      string         `json:"role,omitempty"`
+			Content   string         `json:"content,omitempty"`
+			ToolCalls []chatToolCall `json:"tool_calls,omitempty"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason,omitempty"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Request translation: Codex Responses → OpenAI Chat Completions
+// ---------------------------------------------------------------------------
+
+func (c *Client) buildChatRequest(req protocol.ResponsesRequest) chatRequest {
+	cr := chatRequest{
+		Model:  req.Model,
+		Stream: true,
+	}
+
+	// System instruction
+	if req.Instructions != "" {
+		cr.Messages = append(cr.Messages, chatMessage{
+			Role:    "system",
+			Content: req.Instructions,
+		})
+	}
+
+	// Convert input items to messages
+	for _, item := range req.Input {
+		switch item.Type {
+		case "message":
+			var content string
+			for _, part := range item.Content {
+				content += part.Text
+			}
+			contentType := "output_text"
+			if item.Role != "assistant" {
+				contentType = "input_text"
+			}
+			_ = contentType // only used in Codex format; for chat completions we just use text
+			cr.Messages = append(cr.Messages, chatMessage{
+				Role:    item.Role,
+				Content: content,
+			})
+
+		case "function_call":
+			cr.Messages = append(cr.Messages, chatMessage{
+				Role: "assistant",
+				ToolCalls: []chatToolCall{{
+					ID:   item.CallID,
+					Type: "function",
+					Function: chatFunctionCall{
+						Name:      item.Name,
+						Arguments: item.Arguments,
+					},
+				}},
+			})
+
+		case "function_call_output":
+			cr.Messages = append(cr.Messages, chatMessage{
+				Role:       "tool",
+				ToolCallID: item.CallID,
+				Content:    item.Output,
+			})
+		}
+	}
+
+	// Convert tools
+	for _, tool := range req.Tools {
+		if tool.Type == "function" {
+			cr.Tools = append(cr.Tools, chatTool{
+				Type: "function",
+				Function: chatFunction{
+					Name:        tool.Name,
+					Description: tool.Description,
+					Parameters:  tool.Parameters,
+				},
+			})
+		}
+	}
+
+	return cr
+}
+
+// ---------------------------------------------------------------------------
+// Response translation: OpenAI Chat SSE → Codex Responses SSE
+// ---------------------------------------------------------------------------
+
+// StreamResponses translates OpenAI Chat Completions SSE into Codex Responses SSE events.
 func (c *Client) StreamResponses(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error {
 	if onEvent == nil {
 		return fmt.Errorf("onEvent callback is required")
 	}
 
-	// Convert to OpenAI chat completions format
-	chatReq := c.toOpenAIRequest(req)
+	chatReq := c.buildChatRequest(req)
 	payload, err := json.Marshal(chatReq)
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)
@@ -112,64 +238,188 @@ func (c *Client) StreamResponses(ctx context.Context, req protocol.ResponsesRequ
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	// Parse SSE stream
-	return c.parseSSEStream(resp.Body, onEvent)
+	// Track tool call state for reconstruction
+	type toolState struct {
+		id   string
+		name string
+		args strings.Builder
+	}
+	calls := map[int]*toolState{}
+	textStarted := false
+
+	return sse.ParseStream(resp.Body, func(ev sse.Event) error {
+		// Try to parse as chat chunk
+		var chunk chatChunk
+		if err := json.Unmarshal(ev.Raw, &chunk); err != nil {
+			return nil // skip unparseable events
+		}
+		if len(chunk.Choices) == 0 {
+			// Usage-only event at end
+			if chunk.Usage != nil {
+				return onEvent(codexEvent("response.completed", &protocol.StreamEvent{
+					Type: "response.completed",
+					Response: &protocol.ResponseRef{
+						Usage: &protocol.Usage{
+							InputTokens:  chunk.Usage.PromptTokens,
+							OutputTokens: chunk.Usage.CompletionTokens,
+						},
+					},
+				}))
+			}
+			return nil
+		}
+
+		choice := chunk.Choices[0]
+
+		// Handle text content
+		if choice.Delta.Content != "" {
+			if !textStarted {
+				textStarted = true
+				// Emit content part added
+				if err := onEvent(codexEvent("response.content_part.added", &protocol.StreamEvent{
+					Type: "response.content_part.added",
+					Part: &protocol.ContentPart{Type: "output_text"},
+				})); err != nil {
+					return err
+				}
+			}
+			if err := onEvent(codexEvent("response.output_text.delta", &protocol.StreamEvent{
+				Type:  "response.output_text.delta",
+				Delta: choice.Delta.Content,
+			})); err != nil {
+				return err
+			}
+		}
+
+		// Handle tool calls
+		for _, tc := range choice.Delta.ToolCalls {
+			state, ok := calls[tc.Index]
+			if !ok {
+				// New tool call
+				state = &toolState{id: tc.ID, name: tc.Function.Name}
+				calls[tc.Index] = state
+
+				// Emit output_item.added for the function_call
+				if err := onEvent(codexEvent("response.output_item.added", &protocol.StreamEvent{
+					Type: "response.output_item.added",
+					Item: &protocol.OutputItem{
+						ID:     tc.ID,
+						Type:   "function_call",
+						CallID: tc.ID,
+						Name:   tc.Function.Name,
+					},
+				})); err != nil {
+					return err
+				}
+			}
+
+			// Accumulate arguments
+			if tc.Function.Arguments != "" {
+				state.args.WriteString(tc.Function.Arguments)
+
+				if err := onEvent(codexEvent("response.function_call_arguments.delta", &protocol.StreamEvent{
+					Type:   "response.function_call_arguments.delta",
+					Delta:  tc.Function.Arguments,
+					ItemID: state.id,
+				})); err != nil {
+					return err
+				}
+			}
+		}
+
+		// Handle finish
+		if choice.FinishReason != nil {
+			// Emit response.completed
+			var usage *protocol.Usage
+			if chunk.Usage != nil {
+				usage = &protocol.Usage{
+					InputTokens:  chunk.Usage.PromptTokens,
+					OutputTokens: chunk.Usage.CompletionTokens,
+				}
+			}
+			return onEvent(codexEvent("response.completed", &protocol.StreamEvent{
+				Type: "response.completed",
+				Response: &protocol.ResponseRef{
+					Usage: usage,
+				},
+			}))
+		}
+
+		return nil
+	})
+}
+
+// codexEvent creates an sse.Event from a Codex StreamEvent.
+func codexEvent(eventType string, se *protocol.StreamEvent) sse.Event {
+	raw, _ := json.Marshal(se)
+	return sse.Event{
+		Raw:   raw,
+		Value: *se,
+	}
 }
 
 // StreamAndCollect streams a request and returns collected output.
 func (c *Client) StreamAndCollect(ctx context.Context, req protocol.ResponsesRequest) (backend.StreamResult, error) {
 	var result backend.StreamResult
 	var textParts []string
+	calls := map[string]*backend.ToolCall{}
+	argsAccum := map[string]*strings.Builder{}
 
 	err := c.StreamResponses(ctx, req, func(ev sse.Event) error {
-		// Extract text delta from OpenAI format
-		var data struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-			} `json:"choices"`
-			Usage *protocol.Usage `json:"usage"`
-		}
-		if err := json.Unmarshal(ev.Raw, &data); err == nil {
-			if len(data.Choices) > 0 && data.Choices[0].Delta.Content != "" {
-				textParts = append(textParts, data.Choices[0].Delta.Content)
+		switch ev.Value.Type {
+		case "response.output_text.delta":
+			textParts = append(textParts, ev.Value.Delta)
+
+		case "response.output_item.added":
+			if ev.Value.Item != nil && ev.Value.Item.Type == "function_call" {
+				tc := &backend.ToolCall{
+					CallID: ev.Value.Item.CallID,
+					Name:   ev.Value.Item.Name,
+				}
+				calls[ev.Value.Item.CallID] = tc
+				argsAccum[ev.Value.Item.CallID] = &strings.Builder{}
 			}
-			if data.Usage != nil {
-				result.Usage = data.Usage
+
+		case "response.function_call_arguments.delta":
+			if b, ok := argsAccum[ev.Value.ItemID]; ok {
+				b.WriteString(ev.Value.Delta)
+			}
+
+		case "response.completed":
+			if ev.Value.Response != nil && ev.Value.Response.Usage != nil {
+				result.Usage = ev.Value.Response.Usage
 			}
 		}
 		return nil
 	})
 
 	result.Text = strings.Join(textParts, "")
+	for id, tc := range calls {
+		if b, ok := argsAccum[id]; ok {
+			tc.Arguments = b.String()
+		}
+		result.ToolCalls = append(result.ToolCalls, *tc)
+	}
 	return result, err
 }
 
 // ListModels returns the models available from this backend.
 func (c *Client) ListModels(ctx context.Context) ([]backend.ModelInfo, error) {
-	// If hard-coded models are specified, return those
 	if len(c.cfg.Models) > 0 {
 		models := make([]backend.ModelInfo, len(c.cfg.Models))
 		for i, m := range c.cfg.Models {
-			models[i] = backend.ModelInfo{
-				ID:          m.ID,
-				DisplayName: m.DisplayName,
-			}
+			models[i] = backend.ModelInfo{ID: m.ID, DisplayName: m.DisplayName}
 		}
 		return models, nil
 	}
-
-	// If discovery is disabled, return nil
 	if !c.cfg.Discovery {
 		return nil, nil
 	}
 
-	// Try to fetch from /v1/models
 	resp, err := c.doRequest(ctx, "/models", nil)
 	if err != nil {
 		return nil, err
@@ -192,58 +442,15 @@ func (c *Client) ListModels(ctx context.Context) ([]backend.ModelInfo, error) {
 
 	models := make([]backend.ModelInfo, len(modelsResp.Data))
 	for i, m := range modelsResp.Data {
-		models[i] = backend.ModelInfo{
-			ID: m.ID,
-		}
+		models[i] = backend.ModelInfo{ID: m.ID}
 	}
 	return models, nil
 }
 
-// toOpenAIRequest converts a ResponsesRequest to OpenAI chat completions format.
-func (c *Client) toOpenAIRequest(req protocol.ResponsesRequest) map[string]any {
-	result := map[string]any{
-		"model":  req.Model,
-		"stream": true,
-	}
+// ---------------------------------------------------------------------------
+// HTTP plumbing
+// ---------------------------------------------------------------------------
 
-	// Build messages from input items
-	var messages []map[string]any
-	for _, item := range req.Input {
-		switch item.Type {
-		case "message":
-			// Extract text content from parts
-			var content string
-			for _, part := range item.Content {
-				if part.Type == "input_text" || part.Type == "text" {
-					content += part.Text
-				}
-			}
-			msg := map[string]any{
-				"role":    item.Role,
-				"content": content,
-			}
-			messages = append(messages, msg)
-		}
-	}
-
-	// Add system message if instructions present
-	if req.Instructions != "" {
-		messages = append([]map[string]any{
-			{"role": "system", "content": req.Instructions},
-		}, messages...)
-	}
-
-	result["messages"] = messages
-
-	// Add tools if present
-	if len(req.Tools) > 0 {
-		result["tools"] = req.Tools
-	}
-
-	return result
-}
-
-// doRequest sends an HTTP request to the backend.
 func (c *Client) doRequest(ctx context.Context, path string, body []byte) (*http.Response, error) {
 	url := strings.TrimSuffix(c.cfg.BaseURL, "/") + path
 
@@ -259,19 +466,15 @@ func (c *Client) doRequest(ctx context.Context, path string, body []byte) (*http
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	// Set headers
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "text/event-stream")
-
-	// Apply authentication
 	c.applyAuth(req)
 
 	return c.httpClient.Do(req)
 }
 
-// applyAuth adds authentication headers to the request.
 func (c *Client) applyAuth(req *http.Request) {
 	switch c.cfg.Auth.Type {
 	case "api_key", "bearer":
@@ -280,12 +483,7 @@ func (c *Client) applyAuth(req *http.Request) {
 		}
 	case "header":
 		for k, v := range c.cfg.Auth.Headers {
-			req.Header.Set(k, c.resolveEnvVars(v))
+			req.Header.Set(k, os.Expand(v, os.Getenv))
 		}
 	}
-}
-
-// parseSSEStream reads SSE events from the response body.
-func (c *Client) parseSSEStream(body io.Reader, onEvent func(sse.Event) error) error {
-	return sse.ParseStream(body, onEvent)
 }

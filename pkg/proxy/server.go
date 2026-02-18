@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -269,7 +270,8 @@ func Run(cfg Config) error {
 			Models:    bcfg.Models,
 		})
 		if err != nil {
-			return fmt.Errorf("init custom backend %s: %w", name, err)
+			log.Printf("[WARN] skipping custom backend %s: %v", name, err)
+			continue
 		}
 		router.Register(name, customClient)
 	}

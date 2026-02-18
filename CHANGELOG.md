@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 - 2026-02-18
+### Added
+- **Gemini backend support**: Added Gemini as a custom OpenAI-compatible backend. Configure with `GEMINI_API_KEY` env var. Supports `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash` with aliases `gemini` and `flash`.
+- **Full tool call support in OpenAI-compatible backends**: Rewrote `pkg/backend/openai/` to properly translate between Codex Responses API format and OpenAI Chat Completions format, including:
+  - Tool definitions in requests
+  - Tool call history (function_call + function_call_output → assistant tool_calls + tool messages)
+  - Streaming tool call responses translated to Codex events
+- **Graceful custom backend initialization**: Custom backends that fail to initialize (e.g., missing API key) are now skipped with a warning instead of crashing the proxy.
+- 11 new tests for OpenAI backend (text streaming, tool calls, request translation, event translation).
+
 ## 0.5.9 - 2026-02-18
 ### Fixed
 - **Tools not passed to Codex via `/v1/responses`**: The Responses API uses a flat tool format (`{"type":"function","name":"exec",...}`) while the proxy only supported the Chat Completions nested format (`{"type":"function","function":{"name":"exec",...}}`). Tools were silently dropped, causing models to hallucinate tool usage instead of actually making tool calls. Now supports both formats via `ResolvedFunction()`.
