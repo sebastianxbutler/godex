@@ -673,6 +673,11 @@ func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.
 
 	backends := map[string]backend.Backend{}
 
+	if cfg.Proxy.Backends.Codex.Enabled {
+		codexBe := codex.New(nil, nil, codex.Config{})
+		backends["codex"] = codexBe
+	}
+
 	if cfg.Proxy.Backends.Anthropic.Enabled {
 		be, err := anthropic.New(anthropic.Config{
 			CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
@@ -1457,6 +1462,12 @@ func runAliasesUpdate(args []string) error {
 
 	// Build available backends
 	backends := map[string]backend.Backend{}
+
+		// Codex (uses OpenAI API for discovery if OPENAI_API_KEY is set, else static list)
+	if cfg.Proxy.Backends.Codex.Enabled {
+		codexBe := codex.New(nil, nil, codex.Config{})
+		backends["codex"] = codexBe
+	}
 
 	// Anthropic
 	if cfg.Proxy.Backends.Anthropic.Enabled {

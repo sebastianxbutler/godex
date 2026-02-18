@@ -17,6 +17,7 @@ import (
 type Rule struct {
 	Alias   string // e.g. "opus"
 	Prefix  string // e.g. "claude-opus-" — pick latest model starting with this
+	Suffix  string // optional suffix filter (e.g. "-codex")
 	Backend string // backend name to query (e.g. "anthropic", "gemini")
 }
 
@@ -31,6 +32,10 @@ func DefaultRules() []Rule {
 		// Gemini
 		{Alias: "gemini", Prefix: "gemini-2.5-pro", Backend: "gemini"},
 		{Alias: "flash", Prefix: "gemini-2.5-flash", Backend: "gemini"},
+
+		// Codex / GPT
+		{Alias: "codex", Prefix: "gpt-", Backend: "codex", Suffix: "-codex"},
+		{Alias: "gpt", Prefix: "gpt-", Backend: "codex"},
 	}
 }
 
@@ -86,7 +91,7 @@ func Resolve(ctx context.Context, backends map[string]backend.Backend, current m
 			modelCache[rule.Backend] = models
 		}
 
-		resolved := pickLatest(models, rule.Prefix)
+		resolved := pickLatest(models, rule.Prefix, rule.Suffix)
 		if resolved == "" {
 			res.Error = fmt.Sprintf("no model matching prefix %q", rule.Prefix)
 			res.Resolved = res.Previous
@@ -102,11 +107,13 @@ func Resolve(ctx context.Context, backends map[string]backend.Backend, current m
 // pickLatest finds the latest model matching the given prefix.
 // It sorts matching models lexicographically descending (higher version numbers
 // and later dates sort later) and returns the last one.
-func pickLatest(models []backend.ModelInfo, prefix string) string {
+func pickLatest(models []backend.ModelInfo, prefix, suffix string) string {
 	var matches []string
 	for _, m := range models {
 		if strings.HasPrefix(m.ID, prefix) {
-			matches = append(matches, m.ID)
+			if suffix == "" || strings.HasSuffix(m.ID, suffix) {
+				matches = append(matches, m.ID)
+			}
 		}
 	}
 	if len(matches) == 0 {

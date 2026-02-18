@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -218,7 +219,60 @@ var knownCodexModels = []backend.ModelInfo{
 	{ID: "o1-mini", DisplayName: "o1 Mini"},
 }
 
-// ListModels returns the known models for the Codex backend.
+// ListModels returns models for the Codex/GPT backend.
+// If OPENAI_API_KEY is set, queries the OpenAI models API for live discovery.
+// Otherwise falls back to the hardcoded list.
 func (c *Client) ListModels(ctx context.Context) ([]backend.ModelInfo, error) {
+	if models, err := c.discoverModels(ctx); err == nil && len(models) > 0 {
+		return models, nil
+	}
 	return knownCodexModels, nil
+}
+
+// discoverModels queries the OpenAI public API if an API key is available.
+func (c *Client) discoverModels(ctx context.Context) ([]backend.ModelInfo, error) {
+	key := ""
+	// Check context for provider key first
+	if k, ok := backend.ProviderKey(ctx); ok {
+		key = k
+	}
+	if key == "" {
+		key = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	}
+	if key == "" {
+		return nil, fmt.Errorf("no OpenAI API key")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.openai.com/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("OpenAI models API: %d", resp.StatusCode)
+	}
+
+	var body struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Created int64  `json:"created"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+
+	var models []backend.ModelInfo
+	for _, m := range body.Data {
+		models = append(models, backend.ModelInfo{ID: m.ID})
+	}
+	return models, nil
 }
