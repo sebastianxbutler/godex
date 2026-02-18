@@ -374,12 +374,35 @@ func TestClientAuthHeaders(t *testing.T) {
 				t.Fatalf("New: %v", err)
 			}
 			req, _ := http.NewRequest("GET", "http://localhost", nil)
-			c.applyAuth(req)
+			c.applyAuth(context.Background(), req)
 			got := req.Header.Get("Authorization")
 			if got != tt.wantAuth {
 				t.Errorf("Authorization = %q, want %q", got, tt.wantAuth)
 			}
 		})
+	}
+}
+
+func TestProviderKeyOverride(t *testing.T) {
+	c, _ := New(Config{
+		Name:    "test",
+		BaseURL: "http://localhost/v1",
+		Auth:    config.BackendAuthConfig{Type: "api_key", Key: "configured-key"},
+	})
+
+	// Without override: uses configured key
+	req1, _ := http.NewRequest("GET", "http://localhost", nil)
+	c.applyAuth(context.Background(), req1)
+	if got := req1.Header.Get("Authorization"); got != "Bearer configured-key" {
+		t.Errorf("without override: got %q, want %q", got, "Bearer configured-key")
+	}
+
+	// With override: uses provider key
+	ctx := backend.WithProviderKey(context.Background(), "override-key")
+	req2, _ := http.NewRequest("GET", "http://localhost", nil)
+	c.applyAuth(ctx, req2)
+	if got := req2.Header.Get("Authorization"); got != "Bearer override-key" {
+		t.Errorf("with override: got %q, want %q", got, "Bearer override-key")
 	}
 }
 

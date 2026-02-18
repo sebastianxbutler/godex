@@ -108,7 +108,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !req.Stream {
-		result, err := be.StreamAndCollect(r.Context(), codexReq)
+		result, err := be.StreamAndCollect(requestContext(r), codexReq)
 		if err != nil {
 			s.recordMetric(backendName, req.Model, start, "error", err.Error(), nil)
 			writeError(w, http.StatusBadGateway, err)
@@ -140,7 +140,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	sawTool := false
 
 	var usage *protocol.Usage
-	err = be.StreamResponses(r.Context(), codexReq, func(ev sse.Event) error {
+	err = be.StreamResponses(requestContext(r), codexReq, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
 		if ev.Value.Response != nil && ev.Value.Response.Usage != nil {
 			usage = ev.Value.Response.Usage

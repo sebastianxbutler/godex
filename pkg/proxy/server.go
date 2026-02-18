@@ -594,7 +594,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
 	if !stream {
-		result, err := cl.StreamAndCollect(r.Context(), codexReq)
+		result, err := cl.StreamAndCollect(requestContext(r), codexReq)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			s.logRequest(r, http.StatusBadGateway, start)
@@ -622,7 +622,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	callNames := map[string]string{}
 
 	var usage *protocol.Usage
-	err = cl.StreamResponses(r.Context(), codexReq, func(ev sse.Event) error {
+	err = cl.StreamResponses(requestContext(r), codexReq, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
 		if ev.Value.Response != nil && ev.Value.Response.Usage != nil {
 			usage = ev.Value.Response.Usage
@@ -678,6 +678,16 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (*KeyRecord
 		return nil, false
 	}
 	return &rec, true
+}
+
+// requestContext returns the request context, enriched with a provider key
+// if the X-Provider-Key header is present.
+func requestContext(r *http.Request) context.Context {
+	ctx := r.Context()
+	if key := strings.TrimSpace(r.Header.Get("X-Provider-Key")); key != "" {
+		ctx = backend.WithProviderKey(ctx, key)
+	}
+	return ctx
 }
 
 func (s *Server) sessionKey(user string, r *http.Request) string {

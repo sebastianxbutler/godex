@@ -64,9 +64,8 @@ func (c *Client) resolveAuth() error {
 	case "api_key", "bearer":
 		if c.cfg.Auth.KeyEnv != "" {
 			c.apiKey = os.Getenv(c.cfg.Auth.KeyEnv)
-			if c.apiKey == "" {
-				return fmt.Errorf("environment variable %s not set", c.cfg.Auth.KeyEnv)
-			}
+			// Don't fail if env var is missing — callers can provide
+			// per-request keys via X-Provider-Key header instead.
 		} else if c.cfg.Auth.Key != "" {
 			c.apiKey = os.Expand(c.cfg.Auth.Key, os.Getenv)
 		}
@@ -470,12 +469,19 @@ func (c *Client) doRequest(ctx context.Context, path string, body []byte) (*http
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	c.applyAuth(req)
+	c.applyAuth(ctx, req)
 
 	return c.httpClient.Do(req)
 }
 
-func (c *Client) applyAuth(req *http.Request) {
+func (c *Client) applyAuth(ctx context.Context, req *http.Request) {
+	// Check for per-request provider key override (from X-Provider-Key header)
+	if key, ok := backend.ProviderKey(ctx); ok {
+		req.Header.Set("Authorization", "Bearer "+key)
+		return
+	}
+
+	// Fall back to configured auth
 	switch c.cfg.Auth.Type {
 	case "api_key", "bearer":
 		if c.apiKey != "" {
