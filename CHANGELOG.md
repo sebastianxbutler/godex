@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0 - 2026-02-18
+### Added
+- **Multi-backend `godex exec`**: The CLI now supports all backends, not just Codex. Model name determines the backend automatically:
+  - `gpt-*`, `o1-*`, `o3-*` → Codex (OAuth)
+  - `claude-*`, `sonnet`, `opus`, `haiku` → Anthropic (OAuth)
+  - `gemini-*` → Gemini (API key)
+  - Custom backends from config are also matched
+- **`--provider-key` flag**: Pass API keys for non-OAuth backends directly:
+  ```bash
+  godex exec --model gemini-2.5-pro --provider-key AIza... --prompt "Hello"
+  ```
+- **Generic tool loop** (`pkg/backend/toolloop.go`): Works with any `Backend` interface. The `--auto-tools` flag now works for all backends, not just Codex.
+- **`backend.RunToolLoop()`**: Standalone function for running tool loops with any backend.
+
+## 0.6.1 - 2026-02-18
+### Added
+- **`X-Provider-Key` header**: Per-request API key override for proxy requests.
+
 ## 0.6.0 - 2026-02-18
 ### Added
 - **Gemini backend support**: Added Gemini as a custom OpenAI-compatible backend. Configure with `GEMINI_API_KEY` env var. Supports `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash` with aliases `gemini` and `flash`.

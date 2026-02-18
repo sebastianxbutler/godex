@@ -16,7 +16,10 @@ import (
 	"time"
 
 	"godex/pkg/auth"
-	"godex/pkg/client"
+	"godex/pkg/backend"
+	"godex/pkg/backend/anthropic"
+	"godex/pkg/backend/codex"
+	"godex/pkg/backend/openapi"
 	"godex/pkg/config"
 	"godex/pkg/payments"
 	"godex/pkg/protocol"
@@ -103,6 +106,7 @@ func runExec(args []string) error {
 	var images toolFlags
 	var logRequests string
 	var logResponses string
+	var providerKey string
 
 	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	fs.StringVar(&prompt, "prompt", "", "User prompt")
@@ -125,6 +129,7 @@ func runExec(args []string) error {
 	fs.Var(&images, "image", "Image path (ignored; accepted for OpenClaw CLI compatibility)")
 	fs.StringVar(&logRequests, "log-requests", "", "Write JSON request payload to file")
 	fs.StringVar(&logResponses, "log-responses", "", "Append JSONL response events to file")
+	fs.StringVar(&providerKey, "provider-key", "", "API key for non-Codex backends (or set via env per provider)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -209,18 +214,19 @@ func runExec(args []string) error {
 		return emitMockStream(req, jsonOnly, logResponses, mockMode)
 	}
 
-	cl := client.New(nil, store, client.Config{
-		SessionID:    sessionID,
-		AllowRefresh: allowRefresh,
-		BaseURL:      cfg.Client.BaseURL,
-		Originator:   cfg.Client.Originator,
-		UserAgent:    cfg.Client.UserAgent,
-		RetryMax:     cfg.Client.RetryMax,
-		RetryDelay:   cfg.Client.RetryDelay,
-	})
+	// Resolve backend based on model name
+	be, err := resolveBackend(model, store, cfg, allowRefresh, sessionID, providerKey)
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Exec.Timeout)
 	defer cancel()
+
+	// Inject provider key into context if provided
+	if providerKey != "" {
+		ctx = backend.WithProviderKey(ctx, providerKey)
+	}
 
 	if autoTools {
 		outputs, err := parseToolOutputs(outputs)
@@ -228,7 +234,7 @@ func runExec(args []string) error {
 			return err
 		}
 		handler := staticToolHandler{outputs: outputs}
-		result, err := cl.RunToolLoop(ctx, req, handler, client.ToolLoopOptions{MaxSteps: cfg.Exec.AutoToolsMax})
+		result, err := backend.RunToolLoop(ctx, be, req, handler, backend.ToolLoopOptions{MaxSteps: cfg.Exec.AutoToolsMax})
 		if err != nil {
 			return err
 		}
@@ -239,7 +245,7 @@ func runExec(args []string) error {
 	}
 
 	collector := sse.NewCollector()
-	return cl.StreamResponses(ctx, req, func(ev sse.Event) error {
+	return be.StreamResponses(ctx, req, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
 		if logResponses != "" {
 			if f, err := os.OpenFile(logResponses, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
@@ -1252,6 +1258,71 @@ func promptYesNo(prompt string) bool {
 // execCommand wraps exec.Command for testability
 var execCommand = func(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
+}
+
+// resolveBackend picks the right backend based on model name.
+// For Codex models, uses OAuth. For others, uses the OpenAPI backend
+// with provider key from flag, env, or config.
+func resolveBackend(model string, store *auth.Store, cfg config.Config, allowRefresh bool, sessionID, providerKey string) (backend.Backend, error) {
+	m := strings.ToLower(model)
+
+	// Anthropic models
+	if strings.HasPrefix(m, "claude-") || m == "sonnet" || m == "opus" || m == "haiku" {
+		return anthropic.New(anthropic.Config{
+			CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
+			DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+		})
+	}
+
+	// Gemini models
+	if strings.HasPrefix(m, "gemini-") {
+		key := providerKey
+		if key == "" {
+			key = os.Getenv("GEMINI_API_KEY")
+		}
+		return openapi.New(openapi.Config{
+			Name:    "gemini",
+			BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+			Auth:    config.BackendAuthConfig{Type: "api_key", Key: key},
+		})
+	}
+
+	// Check custom backends from config
+	for name, bcfg := range cfg.Proxy.Backends.Custom {
+		if !bcfg.IsEnabled() {
+			continue
+		}
+		for _, pattern := range cfg.Proxy.Backends.Routing.Patterns[name] {
+			if strings.HasPrefix(m, strings.TrimSuffix(pattern, "-")+"-") || m == strings.TrimSuffix(pattern, "-") {
+				authCfg := bcfg.Auth
+				if providerKey != "" {
+					authCfg = config.BackendAuthConfig{Type: "api_key", Key: providerKey}
+				}
+				return openapi.New(openapi.Config{
+					Name:    name,
+					BaseURL: bcfg.BaseURL,
+					Auth:    authCfg,
+					Models:  bcfg.Models,
+				})
+			}
+		}
+	}
+
+	// Default: Codex
+	baseURL := cfg.Client.BaseURL
+	if baseURL == "" {
+		baseURL = "https://chatgpt.com/backend-api/codex"
+	}
+	c := codex.New(nil, store, codex.Config{
+		SessionID:    sessionID,
+		AllowRefresh: allowRefresh,
+		BaseURL:      baseURL,
+		Originator:   cfg.Client.Originator,
+		UserAgent:    cfg.Client.UserAgent,
+		RetryMax:     cfg.Client.RetryMax,
+		RetryDelay:   cfg.Client.RetryDelay,
+	})
+	return c, nil
 }
 
 func usage() {
