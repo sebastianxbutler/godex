@@ -126,10 +126,10 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 	}
 
 	// Build the system prompt.
-	// - Proxy mode (caller tools, !nativeTools): keep Codex base prompt but
-	//   replace tool-specific sections with caller's instructions.
-	// - Native mode (no caller tools, or nativeTools flag): full Codex prompt.
-	proxyMode := len(turn.Tools) > 0 && !h.nativeTools
+	// - Default (proxy mode): keep Codex base prompt but replace tool-specific
+	//   sections with caller's instructions. Used by proxy and godex exec.
+	// - Native mode (nativeTools flag): full Codex prompt with shell/apply_patch.
+	proxyMode := !h.nativeTools
 	var instructions string
 	if proxyMode {
 		var err error
@@ -169,10 +169,10 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 		}
 	}
 
-	// Build tools: in proxy mode use caller-provided tools,
+	// Build tools: use caller-provided tools when present,
 	// otherwise fall back to the default Codex tool set.
 	var tools []protocol.ToolSpec
-	if proxyMode {
+	if len(turn.Tools) > 0 {
 		for _, t := range turn.Tools {
 			var params json.RawMessage
 			if t.Parameters != nil {
