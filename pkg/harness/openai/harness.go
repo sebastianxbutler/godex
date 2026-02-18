@@ -203,9 +203,7 @@ func (h *Harness) translateEvent(ev protocol.StreamEvent, emit func(harness.Even
 		// Tool call started — we emit on completion
 
 	case "response.function_call_arguments.done":
-		if ev.Item != nil {
-			return emit(harness.NewToolCallEvent(ev.Item.CallID, ev.Item.Name, ev.Item.Arguments))
-		}
+		// Handled by response.output_item.done to avoid duplicates
 
 	case "response.output_item.done":
 		if ev.Item != nil && ev.Item.Type == "function_call" {

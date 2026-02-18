@@ -40,6 +40,8 @@ func TestTranslateEvent_EmptyDelta(t *testing.T) {
 }
 
 func TestTranslateEvent_FunctionCallArgsDone(t *testing.T) {
+	// function_call_arguments.done is now a no-op; tool calls are emitted
+	// via response.output_item.done to avoid duplicates.
 	h := &Harness{}
 	ev := protocol.StreamEvent{
 		Type: "response.function_call_arguments.done",
@@ -57,11 +59,8 @@ func TestTranslateEvent_FunctionCallArgsDone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Kind != harness.EventToolCall {
-		t.Fatalf("expected tool_call, got %v", events)
-	}
-	if events[0].ToolCall.Name != "shell" {
-		t.Errorf("expected 'shell', got %q", events[0].ToolCall.Name)
+	if len(events) != 0 {
+		t.Fatalf("expected no events (handled by output_item.done), got %v", events)
 	}
 }
 

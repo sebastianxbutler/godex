@@ -304,6 +304,38 @@ func (c *Client) StreamResponses(ctx context.Context, req protocol.ResponsesRequ
 		}
 
 		if choice.FinishReason != nil {
+			// Flush any pending tool calls before completing
+			for _, state := range calls {
+				args := state.args.String()
+				// Emit function_call_arguments.done
+				if err := onEvent(codexEvent("response.function_call_arguments.done", &protocol.StreamEvent{
+					Type:   "response.function_call_arguments.done",
+					ItemID: state.id,
+					Item: &protocol.OutputItem{
+						ID:        state.id,
+						Type:      "function_call",
+						CallID:    state.id,
+						Name:      state.name,
+						Arguments: args,
+					},
+				})); err != nil {
+					return err
+				}
+				// Emit output_item.done
+				if err := onEvent(codexEvent("response.output_item.done", &protocol.StreamEvent{
+					Type: "response.output_item.done",
+					Item: &protocol.OutputItem{
+						ID:        state.id,
+						Type:      "function_call",
+						CallID:    state.id,
+						Name:      state.name,
+						Arguments: args,
+					},
+				})); err != nil {
+					return err
+				}
+			}
+
 			var usage *protocol.Usage
 			if chunk.Usage != nil {
 				usage = &protocol.Usage{
