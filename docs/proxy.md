@@ -181,14 +181,21 @@ proxy:
         enabled: true
         base_url: "http://localhost:11434/v1"
         discovery: true  # auto-discover models
-        
+
       groq:
         type: openai
         base_url: "https://api.groq.com/openai/v1"
         auth:
           type: api_key
           key_env: "GROQ_API_KEY"
-          
+
+      gemini:
+        type: openai
+        base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+        auth:
+          type: api_key
+          key_env: "GEMINI_API_KEY"  # or pass X-Provider-Key per request
+
       vllm:
         type: openai
         base_url: "http://gpu-server:8000/v1"
@@ -196,13 +203,19 @@ proxy:
         models:  # hard-coded model list
           - id: "vllm/llama-70b"
             display_name: "Llama 70B"
-            
+
     routing:
       patterns:
         ollama: ["llama-*", "phi-*", "qwen-*"]
         groq: ["groq/*"]
+        gemini: ["gemini-*"]
         vllm: ["vllm/*"]
 ```
+
+> **Note:** Custom backends that fail to initialize (e.g., `key_env` is unset
+> and no `X-Provider-Key` header is provided) are **skipped with a warning**
+> rather than crashing the proxy.  Requests to those backends will fall through
+> to the default backend.
 
 ### Auth types
 
@@ -231,6 +244,17 @@ curl http://127.0.0.1:39001/v1/chat/completions \
 curl http://127.0.0.1:39001/v1/chat/completions \
   -H "Authorization: Bearer $KEY" \
   -d '{"model":"groq/llama-3.3-70b","messages":[{"role":"user","content":"Hello"}]}'
+
+# Use Gemini (key in config via GEMINI_API_KEY env)
+curl http://127.0.0.1:39001/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"Hello"}]}'
+
+# Use Gemini with per-request key override
+curl http://127.0.0.1:39001/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Provider-Key: $GEMINI_API_KEY" \
+  -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 ## Metrics
@@ -299,6 +323,26 @@ Response:
 ## Authentication & API keys
 
 By default the proxy requires `Authorization: Bearer <api-key>`.
+
+### Per-request provider key override
+
+For non-OAuth backends (Gemini, Groq, vLLM, etc.) you can supply an API key
+on a per-request basis using the `X-Provider-Key` header.  The proxy injects
+it into the request context and the OpenAPI backend uses it instead of the
+configured `key_env` value.
+
+```bash
+# Call Gemini through the proxy with a per-request key
+curl http://127.0.0.1:39001/v1/chat/completions \
+  -H "Authorization: Bearer $GODEX_API_KEY" \
+  -H "X-Provider-Key: $GEMINI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+This is equivalent to setting `key_env` in the config but takes precedence
+over it. Useful when you want to keep the proxy config static and supply keys
+per caller.
 
 ### Managed keys
 You can manage multiple keys via CLI:

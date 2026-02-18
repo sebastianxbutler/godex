@@ -10,19 +10,74 @@ pkg/auth/               auth.json loader + refresh handling
 pkg/protocol/           request/response types + tool schema
 pkg/sse/                SSE parser + collector
 pkg/client/             streaming + tool loop helpers (legacy)
-pkg/backend/            Backend interface + router
+pkg/backend/            Backend interface + router + generic tool loop
+pkg/backend/backend.go  Backend interface definition
+pkg/backend/toolloop.go Generic RunToolLoop (works with any Backend)
+pkg/backend/context.go  WithProviderKey / ProviderKey context helpers
 pkg/backend/codex/      Codex/ChatGPT backend
 pkg/backend/anthropic/  Anthropic Messages API backend
+pkg/backend/openapi/    Generic OpenAI-compatible backend (Gemini, Groq, etc.)
 ```
+
+> **Note:** The OpenAI-compatible backend package was renamed from
+> `pkg/backend/openai/` to `pkg/backend/openapi/` to better reflect that it
+> implements the OpenAI *wire format* (not the OpenAI service specifically).
 
 ## Data flow (exec)
 
-1. **CLI parses flags**
-2. **Request is constructed** from prompt/instructions or `--input-json`
-3. **Client sends request** to Responses API
-4. **SSE stream parsed** into JSONL events
-5. **Tool events** optionally handled in a loop
-6. **Output streamed** to stdout (JSONL or text)
+1. **CLI parses flags** (including `--model` and `--provider-key`)
+2. **Backend is selected** via model-based routing (see table below)
+3. **Request is constructed** from prompt/instructions or `--input-json`
+4. **Backend streams response** via `StreamAndCollect` or `StreamResponses`
+5. **SSE stream parsed** into JSONL events
+6. **Tool events** optionally handled in a loop via `backend.RunToolLoop()`
+7. **Output streamed** to stdout (JSONL or text)
+
+### Backend routing (exec)
+
+| Model pattern | Backend | Notes |
+|---------------|---------|-------|
+| `gpt-*`, `o1-*`, `o3-*`, `codex-*` | Codex | Default fallback |
+| `claude-*`, `sonnet`, `opus`, `haiku` | Anthropic | OAuth via Claude Code |
+| `gemini-*`, `gemini`, `flash` | Gemini (OpenAPI) | Requires `GEMINI_API_KEY` or `--provider-key` |
+| Custom patterns from config | Custom OpenAPI backend | Skipped if auth missing |
+
+## Generic tool loop
+
+`backend.RunToolLoop()` in `pkg/backend/toolloop.go` is a backend-agnostic tool
+loop that works with any implementation of the `Backend` interface:
+
+```go
+result, err := backend.RunToolLoop(ctx, be, req, handler, backend.ToolLoopOptions{
+    MaxSteps: 4,
+})
+```
+
+The loop:
+1. Calls `be.StreamAndCollect(ctx, req)`
+2. If the response contains tool calls, invokes `handler.Handle()` for each
+3. Builds follow-up input items (`function_call` + `function_call_output` pairs)
+4. Repeats until no tool calls remain or `MaxSteps` is exceeded
+
+This replaces the Codex-specific tool loop that lived in `pkg/backend/codex/toolloop.go`.
+
+## Provider key context helpers
+
+`pkg/backend/context.go` provides two functions for threading per-request API
+keys through the call stack without changing function signatures:
+
+```go
+// Inject a key (e.g., from --provider-key flag or X-Provider-Key header)
+ctx = backend.WithProviderKey(ctx, key)
+
+// Extract within a backend implementation
+if key, ok := backend.ProviderKey(ctx); ok {
+    // use key instead of configured default
+}
+```
+
+The proxy injects the key from the `X-Provider-Key` HTTP header; `godex exec`
+injects it from the `--provider-key` flag.
 
 ## Tool calling loop
 
@@ -56,12 +111,13 @@ The proxy can route requests to different LLM backends based on model name:
                     │     Router      │
                     │  model → backend│
                     └────────┬────────┘
-            ┌────────────────┼────────────────┐
-            ▼                ▼                ▼
-    ┌───────────────┐ ┌───────────────┐ ┌───────────┐
-    │    Codex      │ │   Anthropic   │ │  (future) │
-    │  gpt-*, o1-*  │ │  claude-*     │ │           │
-    └───────────────┘ └───────────────┘ └───────────┘
+        ┌───────────────────┬┴──────────────────┬──────────────────┐
+        ▼                   ▼                   ▼                  ▼
+┌───────────────┐ ┌───────────────┐ ┌─────────────────┐ ┌──────────────────┐
+│    Codex      │ │   Anthropic   │ │     Gemini      │ │  Custom OpenAPI  │
+│  gpt-*, o1-*  │ │   claude-*    │ │   gemini-*      │ │  (Groq, Ollama,  │
+│  o3-*, codex-*│ │  sonnet/opus  │ │   flash, gemini │ │   vLLM, etc.)   │
+└───────────────┘ └───────────────┘ └─────────────────┘ └──────────────────┘
 ```
 
 ### Backend interface
@@ -71,13 +127,15 @@ type Backend interface {
     Name() string
     StreamResponses(ctx, req, onEvent) error
     StreamAndCollect(ctx, req) (StreamResult, error)
+    ListModels(ctx) ([]ModelInfo, error)
 }
 ```
 
 ### Routing rules
 
-- Model prefix matching: `claude-*` → Anthropic, `gpt-*` → Codex
-- Aliases: `sonnet` → `claude-sonnet-4-5-20250929`
+- Model prefix matching: `claude-*` → Anthropic, `gpt-*` → Codex, `gemini-*` → Gemini
+- Aliases: `sonnet` → `claude-sonnet-4-5-20250929`, `gemini` → `gemini-2.5-pro`, `flash` → `gemini-2.5-flash`
+- Custom backend patterns read from config (`routing.patterns`)
 - Fallback to default backend for unknown models
 
 ### Anthropic backend
@@ -88,19 +146,20 @@ Uses the official `anthropic-sdk-go` with OAuth authentication:
 - Requires `anthropic-beta: oauth-2025-04-20` header
 - Translates OpenAI format ↔ Anthropic Messages API
 
+### OpenAPI backend (`pkg/backend/openapi/`)
+
+A generic backend for any OpenAI-compatible endpoint:
+- Used for Gemini, Groq, vLLM, Ollama, and user-defined custom backends
+- Supports API key auth via `key_env`, literal `key`, or per-request `X-Provider-Key` / `--provider-key`
+- Custom backends that fail to initialize (e.g., missing env var) are **skipped with a warning** — the proxy continues serving other backends
+
 ### Dynamic model discovery
 
 The `/v1/models` endpoint queries backends for available models:
 - **Anthropic**: Calls `GET /v1/models` API (live discovery)
 - **Codex**: Returns known model list (hardcoded)
+- **OpenAPI backends**: Optionally call `GET /v1/models` if `discovery: true`
 - Results cached for 5 minutes
-
-```go
-type Backend interface {
-    // ... existing methods ...
-    ListModels(ctx) ([]ModelInfo, error)
-}
-```
 
 ## Design goals
 - **Minimal surface area**

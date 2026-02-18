@@ -17,7 +17,8 @@ Config:
 - `--prompt <text>` — user prompt (ignored if `--input-json` is used)
 
 ### Common flags
-- `--model <id>` — model id (e.g., `gpt-5.2-codex`)
+- `--model <id>` — model id (e.g., `gpt-5.2-codex`, `sonnet`, `gemini`)
+- `--provider-key <key>` — API key for non-OAuth backends (e.g., Gemini, Groq). Overrides `key_env` config.
 - `--instructions <text>` — system prompt
 - `--append-system-prompt <text>` — appended system prompt
 - `--session-id <id>` — optional session identifier
@@ -32,6 +33,29 @@ Config:
 - `--mock` — enable mock mode
 - `--mock-mode <echo|text|tool-call|tool-loop>` — mock flavor
 
+### Multi-backend routing
+
+`godex exec` routes requests to different backends based on the model name:
+
+| Model pattern | Backend | Example models |
+|---------------|---------|---------------|
+| `gpt-*`, `o1-*`, `o3-*`, `codex-*` | Codex | `gpt-5.2-codex`, `o3-mini` |
+| `claude-*`, `sonnet`, `opus`, `haiku` | Anthropic | `claude-sonnet-4-5-20250929`, `sonnet` |
+| `gemini-*`, `gemini`, `flash` | Gemini (OpenAPI) | `gemini-2.5-pro`, `gemini-2.5-flash` |
+| Custom patterns from config | Custom backend | `groq/llama-3.3-70b`, `llama-3.2-3b` |
+
+Default (no match): Codex.
+
+**Model aliases** (resolved before routing):
+
+| Alias | Resolves to |
+|-------|-------------|
+| `sonnet` | `claude-sonnet-4-5-20250929` |
+| `opus` | `claude-opus-4-5` |
+| `haiku` | `claude-haiku-4-5` |
+| `gemini` | `gemini-2.5-pro` |
+| `flash` | `gemini-2.5-flash` |
+
 ### Tool schema specification
 
 ```
@@ -41,6 +65,31 @@ Config:
 Formats:
 - `name:json=<path>` — JSON schema file for a function tool
 - `name:inline=<json>` — inline JSON schema
+
+### Examples
+
+```bash
+# Default model (Codex)
+./godex exec --prompt "Hello"
+
+# Anthropic Claude via alias
+./godex exec --prompt "Explain monads" --model sonnet
+
+# Anthropic full model name
+./godex exec --prompt "Explain monads" --model claude-sonnet-4-5-20250929
+
+# Gemini via alias (requires GEMINI_API_KEY env or --provider-key)
+./godex exec --prompt "What is 2+2?" --model gemini
+
+# Gemini with explicit key
+./godex exec --prompt "What is 2+2?" --model gemini-2.5-flash --provider-key "$GEMINI_API_KEY"
+
+# Gemini Flash alias
+./godex exec --prompt "Quick summary" --model flash --provider-key "$GEMINI_API_KEY"
+
+# Custom backend (Groq) with provider key
+./godex exec --prompt "Hello" --model groq/llama-3.3-70b --provider-key "$GROQ_API_KEY"
+```
 
 ### Tool loop usage
 

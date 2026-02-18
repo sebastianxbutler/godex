@@ -99,7 +99,17 @@ proxy:
       #   auth:
       #     type: api_key
       #     key_env: "GROQ_API_KEY"  # read from environment
-      
+
+      # Example: Google Gemini (OpenAI-compatible endpoint)
+      # gemini:
+      #   type: openai
+      #   enabled: true
+      #   base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+      #   auth:
+      #     type: api_key
+      #     key_env: "GEMINI_API_KEY"  # or pass X-Provider-Key per request
+      # (add routing pattern: gemini: ["gemini-"] and aliases: gemini: gemini-2.5-pro, flash: gemini-2.5-flash)
+
       # Example: vLLM with hard-coded models
       # vllm:
       #   type: openai
@@ -136,6 +146,8 @@ proxy:
         sonnet: claude-sonnet-4-5-20250929
         opus: claude-opus-4-5
         haiku: claude-haiku-4-5
+        gemini: gemini-2.5-pro
+        flash: gemini-2.5-flash
   
   # Per-backend metrics collection
   metrics:
