@@ -60,6 +60,9 @@ type Config struct {
 	EventsPath      string
 	EventsMaxBytes  int64
 	EventsBackups   int
+	AuditPath       string
+	AuditMaxBytes   int64
+	AuditBackups    int
 	MeterWindow     time.Duration
 	AdminSocket     string
 	Payments        payments.Config
@@ -109,6 +112,7 @@ type Server struct {
 	httpClient *http.Client
 	authStore  *auth.Store
 	logger     *Logger
+	audit      *AuditLogger
 	keys       *KeyStore
 	limiters   *LimiterStore
 	metrics    *metrics.Collector
@@ -292,6 +296,7 @@ func Run(cfg Config) error {
 		httpClient:     http.DefaultClient,
 		authStore:      store,
 		logger:         NewLogger(ParseLogLevel(cfg.LogLevel)),
+		audit:          NewAuditLogger(cfg.AuditPath, cfg.AuditMaxBytes, cfg.AuditBackups),
 		keys:           keys,
 		limiters:       limiters,
 		usage:          usage,
@@ -605,6 +610,35 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 		s.recordUsage(r, key, http.StatusOK, nil)
 		s.logRequest(r, http.StatusOK, start)
+
+		// Audit log (non-streaming)
+		if s.audit != nil {
+			var toolNames []string
+			for _, tc := range result.ToolCalls {
+				toolNames = append(toolNames, tc.Name)
+			}
+			entry := AuditEntry{
+				KeyID:         key.ID,
+				KeyLabel:      key.Label,
+				Method:        r.Method,
+				Path:          r.URL.Path,
+				Model:         req.Model,
+				Status:        http.StatusOK,
+				ElapsedMs:     time.Since(start).Milliseconds(),
+				ToolCount:     len(req.Tools),
+				HasToolCalls:  len(result.ToolCalls) > 0,
+				ToolCallNames: toolNames,
+				OutputText:    result.Text,
+			}
+			if result.Usage != nil {
+				entry.TokensIn = result.Usage.InputTokens
+				entry.TokensOut = result.Usage.OutputTokens
+			}
+			if reqJSON, err := json.Marshal(req); err == nil {
+				entry.Request = reqJSON
+			}
+			s.audit.Log(entry)
+		}
 		return
 	}
 
@@ -652,6 +686,43 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 	s.recordUsage(r, key, http.StatusOK, usage)
 	s.logRequest(r, http.StatusOK, start)
+
+	// Audit log
+	if s.audit != nil {
+		var toolNames []string
+		for _, name := range callNames {
+			toolNames = append(toolNames, name)
+		}
+		inputCount := 0
+		if len(req.Input) > 0 {
+			var items []json.RawMessage
+			if json.Unmarshal(req.Input, &items) == nil {
+				inputCount = len(items)
+			}
+		}
+		entry := AuditEntry{
+			KeyID:         key.ID,
+			KeyLabel:      key.Label,
+			Method:        r.Method,
+			Path:          r.URL.Path,
+			Model:         req.Model,
+			Status:        http.StatusOK,
+			ElapsedMs:     time.Since(start).Milliseconds(),
+			InputItems:    inputCount,
+			ToolCount:     len(req.Tools),
+			HasToolCalls:  len(callNames) > 0,
+			ToolCallNames: toolNames,
+			OutputText:    collector.OutputText(),
+		}
+		if usage != nil {
+			entry.TokensIn = usage.InputTokens
+			entry.TokensOut = usage.OutputTokens
+		}
+		if reqJSON, err := json.Marshal(req); err == nil {
+			entry.Request = reqJSON
+		}
+		s.audit.Log(entry)
+	}
 }
 
 func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (*KeyRecord, bool) {

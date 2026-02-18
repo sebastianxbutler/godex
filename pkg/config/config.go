@@ -76,6 +76,9 @@ type ProxyConfig struct {
 	EventsPath    string         `yaml:"events_path"`
 	EventsMax     int64          `yaml:"events_max_bytes"`
 	EventsBackups int            `yaml:"events_max_backups"`
+	AuditPath     string         `yaml:"audit_path"`
+	AuditMaxBytes int64          `yaml:"audit_max_bytes"`
+	AuditBackups  int            `yaml:"audit_max_backups"`
 	MeterWindow   time.Duration  `yaml:"meter_window"`
 	AdminSocket   string         `yaml:"admin_socket"`
 	Payments      PaymentsConfig `yaml:"payments"`
@@ -217,6 +220,9 @@ func DefaultConfig() Config {
 			EventsPath:    "",
 			EventsMax:     1024 * 1024,
 			EventsBackups: 3,
+			AuditPath:     "",
+			AuditMaxBytes: 10 * 1024 * 1024,
+			AuditBackups:  3,
 			MeterWindow:   0,
 			AdminSocket:   "~/.godex/admin.sock",
 			Payments: PaymentsConfig{
@@ -422,6 +428,19 @@ func ApplyEnv(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_EVENTS_MAX_BACKUPS")); v != "" {
 		if n, err := parseInt(v); err == nil {
 			cfg.Proxy.EventsBackups = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_AUDIT_PATH")); v != "" {
+		cfg.Proxy.AuditPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_AUDIT_MAX_BYTES")); v != "" {
+		if n, err := parseInt64(v); err == nil {
+			cfg.Proxy.AuditMaxBytes = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_AUDIT_MAX_BACKUPS")); v != "" {
+		if n, err := parseInt(v); err == nil {
+			cfg.Proxy.AuditBackups = n
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_METER_WINDOW")); v != "" {
