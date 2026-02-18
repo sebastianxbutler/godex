@@ -117,6 +117,54 @@ func BuildSystemPrompt(turn *harness.Turn) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
+// BuildProxySystemPrompt builds a system prompt for proxy mode: keeps the Codex
+// base prompt (personality, planning, task execution, formatting) but replaces
+// tool-specific sections (Shell commands, apply_patch, update_plan) with the
+// caller's instructions.
+func BuildProxySystemPrompt(turn *harness.Turn) (string, error) {
+	base, err := loadTemplate("base_instructions.md")
+	if err != nil {
+		return "", fmt.Errorf("codex prompt: load base instructions: %w", err)
+	}
+
+	// Strip tool-specific sections from the base prompt:
+	// 1. "# Tool Guidelines" section at the end
+	// 2. apply_patch usage instructions embedded in "## Task execution"
+	base = stripToolSections(base)
+
+	var parts []string
+	parts = append(parts, base)
+
+	// Append caller's instructions (these contain the caller's tool context)
+	if turn.Instructions != "" {
+		parts = append(parts, turn.Instructions)
+	}
+
+	return strings.Join(parts, "\n\n"), nil
+}
+
+// stripToolSections removes Codex-specific tool references from the base prompt,
+// keeping the core personality, planning, and formatting guidance intact.
+func stripToolSections(prompt string) string {
+	// Remove "# Tool Guidelines" section and everything after it
+	if idx := strings.Index(prompt, "\n# Tool Guidelines"); idx >= 0 {
+		prompt = strings.TrimRight(prompt[:idx], "\n ")
+	}
+
+	// Remove apply_patch usage line from Task execution section
+	lines := strings.Split(prompt, "\n")
+	var filtered []string
+	for _, line := range lines {
+		// Skip lines that reference apply_patch tool specifics
+		if strings.Contains(line, "apply_patch") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	return strings.Join(filtered, "\n")
+}
+
 // formatAgentsMD wraps AGENTS.md content in the Codex-standard format.
 func formatAgentsMD(dir, content string) string {
 	return fmt.Sprintf("# AGENTS.md instructions for %s\n\n<INSTRUCTIONS>\n%s\n</INSTRUCTIONS>", dir, content)

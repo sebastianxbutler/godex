@@ -119,10 +119,15 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 	}
 
 	// Build the system prompt. When caller provides tools (proxy pass-through),
-	// use their instructions directly without layering Codex defaults.
+	// keep the Codex base prompt but replace tool-specific sections with
+	// the caller's instructions.
 	var instructions string
-	if len(turn.Tools) > 0 && turn.Instructions != "" {
-		instructions = turn.Instructions
+	if len(turn.Tools) > 0 {
+		var err error
+		instructions, err = BuildProxySystemPrompt(turn)
+		if err != nil {
+			return protocol.ResponsesRequest{}, err
+		}
 	} else {
 		var err error
 		instructions, err = BuildSystemPrompt(turn)
