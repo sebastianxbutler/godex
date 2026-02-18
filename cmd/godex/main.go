@@ -707,6 +707,7 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 			})
 			h := harnessCodexP.New(harnessCodexP.Config{
 				Client:        codexClient,
+				NativeTools:   cfg.Proxy.Backends.Codex.NativeTools,
 				ExtraAliases:  cfg.Proxy.Backends.Routing.Aliases,
 				ExtraPrefixes: cfg.Proxy.Backends.Routing.Patterns["codex"],
 			})

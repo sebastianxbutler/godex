@@ -19,6 +19,11 @@ type Config struct {
 	// DefaultModel is the model to use when Turn.Model is empty.
 	DefaultModel string
 
+	// NativeTools forces the use of Codex's built-in tools (shell, apply_patch,
+	// update_plan) even when the caller provides their own tools. When false
+	// (default), caller-provided tools replace the defaults in proxy mode.
+	NativeTools bool
+
 	// ExtraAliases are additional aliases merged with defaults.
 	ExtraAliases map[string]string
 
@@ -30,6 +35,7 @@ type Config struct {
 type Harness struct {
 	client        *Client
 	defaultModel  string
+	nativeTools   bool
 	extraAliases  map[string]string
 	extraPrefixes []string
 }
@@ -46,6 +52,7 @@ func New(cfg Config) *Harness {
 	return &Harness{
 		client:        cfg.Client,
 		defaultModel:  model,
+		nativeTools:   cfg.NativeTools,
 		extraAliases:  cfg.ExtraAliases,
 		extraPrefixes: cfg.ExtraPrefixes,
 	}
@@ -118,11 +125,13 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 		model = h.defaultModel
 	}
 
-	// Build the system prompt. When caller provides tools (proxy pass-through),
-	// keep the Codex base prompt but replace tool-specific sections with
-	// the caller's instructions.
+	// Build the system prompt.
+	// - Proxy mode (caller tools, !nativeTools): keep Codex base prompt but
+	//   replace tool-specific sections with caller's instructions.
+	// - Native mode (no caller tools, or nativeTools flag): full Codex prompt.
+	proxyMode := len(turn.Tools) > 0 && !h.nativeTools
 	var instructions string
-	if len(turn.Tools) > 0 {
+	if proxyMode {
 		var err error
 		instructions, err = BuildProxySystemPrompt(turn)
 		if err != nil {
@@ -160,10 +169,10 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 		}
 	}
 
-	// Build tools: use caller-provided tools when present (proxy pass-through),
+	// Build tools: in proxy mode use caller-provided tools,
 	// otherwise fall back to the default Codex tool set.
 	var tools []protocol.ToolSpec
-	if len(turn.Tools) > 0 {
+	if proxyMode {
 		for _, t := range turn.Tools {
 			var params json.RawMessage
 			if t.Parameters != nil {

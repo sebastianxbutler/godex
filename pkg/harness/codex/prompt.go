@@ -117,20 +117,45 @@ func BuildSystemPrompt(turn *harness.Turn) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
+// Marker tags used to identify replaceable sections in the base prompt.
+// When Codex releases a new base prompt, just keep these markers around
+// the tool-specific content and the rest is handled automatically.
+const (
+	markerPrefix = "<!-- "
+	markerSuffix = " -->"
+)
+
+// sectionReplacements maps marker names to their proxy-mode replacements.
+// Empty string means the section is removed entirely.
+// Nil map value means use the default (keep original content).
+var defaultReplacements = map[string]string{
+	"CAPABILITIES":      "- Receive user prompts and respond using the provided tools.\n- Communicate with the user by streaming responses.",
+	"TOOL_USAGE":        "", // removed — caller provides their own tool instructions
+	"TOOL_HINTS":        "", // removed — not applicable to caller's tools
+	"TOOL_PRESENTATION": "", // removed — caller handles presentation
+	"TOOL_GUIDELINES":   "", // removed — caller provides tool context
+}
+
 // BuildProxySystemPrompt builds a system prompt for proxy mode: keeps the Codex
 // base prompt (personality, planning, task execution, formatting) but replaces
-// tool-specific sections (Shell commands, apply_patch, update_plan) with the
-// caller's instructions.
+// marked tool-specific sections with caller-appropriate content.
+//
+// Sections are marked in base_instructions.md with HTML comments:
+//
+//	<!-- SECTION_NAME_START -->
+//	...content...
+//	<!-- SECTION_NAME_END -->
+//
+// The replacements map controls what each section becomes. When updating to a
+// new Codex prompt version, just preserve the markers and everything works.
 func BuildProxySystemPrompt(turn *harness.Turn) (string, error) {
 	base, err := loadTemplate("base_instructions.md")
 	if err != nil {
 		return "", fmt.Errorf("codex prompt: load base instructions: %w", err)
 	}
 
-	// Strip tool-specific sections from the base prompt:
-	// 1. "# Tool Guidelines" section at the end
-	// 2. apply_patch usage instructions embedded in "## Task execution"
-	base = stripToolSections(base)
+	// Apply section replacements
+	base = replaceMarkedSections(base, defaultReplacements)
 
 	var parts []string
 	parts = append(parts, base)
@@ -143,26 +168,35 @@ func BuildProxySystemPrompt(turn *harness.Turn) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// stripToolSections removes Codex-specific tool references from the base prompt,
-// keeping the core personality, planning, and formatting guidance intact.
-func stripToolSections(prompt string) string {
-	// Remove "# Tool Guidelines" section and everything after it
-	if idx := strings.Index(prompt, "\n# Tool Guidelines"); idx >= 0 {
-		prompt = strings.TrimRight(prompt[:idx], "\n ")
-	}
+// replaceMarkedSections finds <!-- NAME_START --> ... <!-- NAME_END --> blocks
+// and replaces them with the provided content. Empty replacement removes the
+// section entirely (including markers).
+func replaceMarkedSections(text string, replacements map[string]string) string {
+	for name, replacement := range replacements {
+		startTag := markerPrefix + name + "_START" + markerSuffix
+		endTag := markerPrefix + name + "_END" + markerSuffix
 
-	// Remove apply_patch usage line from Task execution section
-	lines := strings.Split(prompt, "\n")
-	var filtered []string
-	for _, line := range lines {
-		// Skip lines that reference apply_patch tool specifics
-		if strings.Contains(line, "apply_patch") {
+		startIdx := strings.Index(text, startTag)
+		endIdx := strings.Index(text, endTag)
+		if startIdx < 0 || endIdx < 0 || endIdx <= startIdx {
 			continue
 		}
-		filtered = append(filtered, line)
+		endIdx += len(endTag)
+
+		if replacement == "" {
+			// Remove the section and surrounding blank lines
+			text = text[:startIdx] + text[endIdx:]
+		} else {
+			text = text[:startIdx] + replacement + text[endIdx:]
+		}
 	}
 
-	return strings.Join(filtered, "\n")
+	// Clean up multiple consecutive blank lines left by removals
+	for strings.Contains(text, "\n\n\n") {
+		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
+	}
+
+	return text
 }
 
 // formatAgentsMD wraps AGENTS.md content in the Codex-standard format.

@@ -153,6 +153,10 @@ type CodexBackendConfig struct {
 	Enabled         bool   `yaml:"enabled"`
 	BaseURL         string `yaml:"base_url"`
 	CredentialsPath string `yaml:"credentials_path"`
+	// NativeTools forces Codex's built-in tools (shell, apply_patch, update_plan)
+	// even when the caller provides their own tools. Default false (proxy mode
+	// uses caller's tools).
+	NativeTools     bool   `yaml:"native_tools"`
 }
 
 // AnthropicBackendConfig configures the Anthropic backend.
