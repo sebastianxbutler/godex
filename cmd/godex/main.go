@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"godex/pkg/aliases"
 	"godex/pkg/auth"
 	"godex/pkg/backend"
 	"godex/pkg/backend/anthropic"
@@ -71,6 +73,11 @@ func main() {
 		}
 	case "auth":
 		if err := runAuth(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+	case "aliases":
+		if err := runAliases(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -540,6 +547,7 @@ func runProxy(args []string) error {
 	var eventsMaxBytes int64
 	var eventsBackups int
 	var meterWindow string
+	var syncAliases bool
 
 	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	fs.StringVar(&listen, "listen", cfg.Proxy.Listen, "Listen address")
@@ -566,6 +574,7 @@ func runProxy(args []string) error {
 	fs.Int64Var(&eventsMaxBytes, "events-max-bytes", cfg.Proxy.EventsMax, "Max events file size before rotation")
 	fs.IntVar(&eventsBackups, "events-max-backups", cfg.Proxy.EventsBackups, "Max rotated events files to keep")
 	fs.StringVar(&meterWindow, "meter-window", cfg.Proxy.MeterWindow.String(), "Metering window duration (e.g. 24h); empty disables window")
+	fs.BoolVar(&syncAliases, "sync-aliases", false, "Update model aliases from providers on startup")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -649,7 +658,73 @@ func runProxy(args []string) error {
 			LogRequests: cfg.Proxy.Metrics.LogRequests,
 		},
 	}
+	if syncAliases {
+		if err := syncAliasesOnStartup(cfg, *configPath, &proxyCfg); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  alias sync: %v\n", err)
+		}
+	}
+
 	return proxy.Run(proxyCfg)
+}
+
+func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	backends := map[string]backend.Backend{}
+
+	if cfg.Proxy.Backends.Anthropic.Enabled {
+		be, err := anthropic.New(anthropic.Config{
+			CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
+			DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+		})
+		if err == nil {
+			backends["anthropic"] = be
+		}
+	}
+
+	for name, bcfg := range cfg.Proxy.Backends.Custom {
+		if !bcfg.IsEnabled() {
+			continue
+		}
+		authCfg := bcfg.Auth
+		if authCfg.Key == "" && authCfg.KeyEnv != "" {
+			authCfg.Key = os.Getenv(authCfg.KeyEnv)
+		}
+		be, err := openapi.New(openapi.Config{
+			Name:      name,
+			BaseURL:   bcfg.BaseURL,
+			Auth:      authCfg,
+			Discovery: bcfg.HasDiscovery(),
+			Models:    bcfg.Models,
+		})
+		if err == nil {
+			backends[name] = be
+		}
+	}
+
+	if len(backends) == 0 {
+		return nil
+	}
+
+	current := cfg.Proxy.Backends.Routing.Aliases
+	if current == nil {
+		current = map[string]string{}
+	}
+
+	results := aliases.Resolve(ctx, backends, current, nil)
+	n := aliases.ApplyResolutions(current, results)
+	if n > 0 {
+		// Update the proxy config in memory
+		proxyCfg.Backends.Routing.Aliases = current
+		// Persist to disk
+		if err := config.UpdateAliases(configPath, current); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  alias save: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "✅ synced %d alias(es)\n", n)
+		}
+	}
+	return nil
 }
 
 func runProxyKeys(args []string) error {
@@ -1325,6 +1400,145 @@ func resolveBackend(model string, store *auth.Store, cfg config.Config, allowRef
 	return c, nil
 }
 
+func runAliases(args []string) error {
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+
+	switch args[0] {
+	case "list":
+		return runAliasesList(args[1:])
+	case "update":
+		return runAliasesUpdate(args[1:])
+	default:
+		return fmt.Errorf("unknown aliases command: %s (use 'list' or 'update')", args[0])
+	}
+}
+
+func runAliasesList(args []string) error {
+	fs := flag.NewFlagSet("aliases list", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", config.DefaultPath(), "Config file path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg := config.LoadFrom(*configPath)
+
+	if len(cfg.Proxy.Backends.Routing.Aliases) == 0 {
+		fmt.Println("No aliases configured.")
+		return nil
+	}
+
+	// Sort for deterministic output
+	keys := make([]string, 0, len(cfg.Proxy.Backends.Routing.Aliases))
+	for k := range cfg.Proxy.Backends.Routing.Aliases {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		fmt.Printf("%-12s → %s\n", k, cfg.Proxy.Backends.Routing.Aliases[k])
+	}
+	return nil
+}
+
+func runAliasesUpdate(args []string) error {
+	fs := flag.NewFlagSet("aliases update", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", config.DefaultPath(), "Config file path")
+	dryRun := fs.Bool("dry-run", false, "Show what would change without writing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg := config.LoadFrom(*configPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Build available backends
+	backends := map[string]backend.Backend{}
+
+	// Anthropic
+	if cfg.Proxy.Backends.Anthropic.Enabled {
+		be, err := anthropic.New(anthropic.Config{
+			CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
+			DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+		})
+		if err == nil {
+			backends["anthropic"] = be
+		} else {
+			fmt.Fprintf(os.Stderr, "⚠️  anthropic: %v\n", err)
+		}
+	}
+
+	// Custom backends (including gemini)
+	for name, bcfg := range cfg.Proxy.Backends.Custom {
+		if !bcfg.IsEnabled() {
+			continue
+		}
+		authCfg := bcfg.Auth
+		if authCfg.Key == "" && authCfg.KeyEnv != "" {
+			authCfg.Key = os.Getenv(authCfg.KeyEnv)
+		}
+		be, err := openapi.New(openapi.Config{
+			Name:      name,
+			BaseURL:   bcfg.BaseURL,
+			Auth:      authCfg,
+			Discovery: bcfg.HasDiscovery(),
+			Models:    bcfg.Models,
+		})
+		if err == nil {
+			backends[name] = be
+		} else {
+			fmt.Fprintf(os.Stderr, "⚠️  %s: %v\n", name, err)
+		}
+	}
+
+	if len(backends) == 0 {
+		return fmt.Errorf("no backends available for model discovery")
+	}
+
+	current := cfg.Proxy.Backends.Routing.Aliases
+	if current == nil {
+		current = map[string]string{}
+	}
+
+	results := aliases.Resolve(ctx, backends, current, nil)
+
+	// Display results
+	anyChanged := false
+	for _, r := range results {
+		if r.Error != "" {
+			fmt.Fprintf(os.Stderr, "⚠️  %-12s %s\n", r.Alias+":", r.Error)
+			continue
+		}
+		if r.Changed {
+			fmt.Printf("✅ %-12s %s → %s\n", r.Alias+":", r.Previous, r.Resolved)
+			anyChanged = true
+		} else {
+			fmt.Printf("   %-12s %s (unchanged)\n", r.Alias+":", r.Resolved)
+		}
+	}
+
+	if !anyChanged {
+		fmt.Println("\nAll aliases are up to date.")
+		return nil
+	}
+
+	if *dryRun {
+		fmt.Println("\n(dry run — no changes written)")
+		return nil
+	}
+
+	// Apply and save
+	aliases.ApplyResolutions(current, results)
+	if err := config.UpdateAliases(*configPath, current); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	fmt.Println("\n✅ Config updated.")
+	return nil
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: godex exec --config <path> --prompt \"...\" [--model gpt-5.2-codex] [--tool web_search] [--tool name:json=schema.json] [--web-search] [--tool-choice auto|required|function:<name>] [--input-json path] [--mock --mock-mode echo|text|tool-call|tool-loop] [--auto-tools --tool-output name=value] [--trace] [--json] [--log-requests path] [--log-responses path]")
 	fmt.Fprintln(os.Stderr, "       godex proxy --config <path> --api-key <key> [--listen 127.0.0.1:39001] [--model gpt-5.2-codex] [--base-url https://chatgpt.com/backend-api/codex] [--allow-any-key] [--auth-path ~/.codex/auth.json] [--log-requests]")
@@ -1333,4 +1547,5 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "       godex proxy usage --config <path> list [--since 24h] [--key <id>] | show <id>")
 	fmt.Fprintln(os.Stderr, "       godex probe <model> [--url http://127.0.0.1:39001] [--key <api-key>] [--json]")
 	fmt.Fprintln(os.Stderr, "       godex auth status | setup")
+	fmt.Fprintln(os.Stderr, "       godex aliases list | update [--dry-run]")
 }
