@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.9 - 2026-02-18
+### Fixed
+- **Tools not passed to Codex via `/v1/responses`**: The Responses API uses a flat tool format (`{"type":"function","name":"exec",...}`) while the proxy only supported the Chat Completions nested format (`{"type":"function","function":{"name":"exec",...}}`). Tools were silently dropped, causing models to hallucinate tool usage instead of actually making tool calls. Now supports both formats via `ResolvedFunction()`.
+
 ## 0.5.8 - 2026-02-17
 ### Fixed
 - **Assistant messages use correct content type**: Assistant messages now use `output_text` instead of `input_text` for their content. Codex rejects `input_text` for assistant role with "Invalid value: 'input_text'. Supported values are: 'output_text' and 'refusal'."

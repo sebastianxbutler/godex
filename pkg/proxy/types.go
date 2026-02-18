@@ -22,6 +22,27 @@ type OpenAIResponsesRequest struct {
 type OpenAITool struct {
 	Type     string          `json:"type"`
 	Function *OpenAIFunction `json:"function,omitempty"`
+	// Flat format fields (Responses API puts these at top level)
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// ResolvedFunction returns the function spec, handling both flat (Responses API)
+// and nested (Chat Completions API) tool formats.
+func (t OpenAITool) ResolvedFunction() *OpenAIFunction {
+	if t.Function != nil {
+		return t.Function
+	}
+	// Flat format: name/description/parameters at top level
+	if t.Name != "" {
+		return &OpenAIFunction{
+			Name:        t.Name,
+			Description: t.Description,
+			Parameters:  t.Parameters,
+		}
+	}
+	return nil
 }
 
 type OpenAIFunction struct {

@@ -154,14 +154,15 @@ func mapTools(tools []OpenAITool) []protocol.ToolSpec {
 	for _, tool := range tools {
 		switch tool.Type {
 		case "function":
-			if tool.Function == nil {
+			fn := tool.ResolvedFunction()
+			if fn == nil {
 				continue
 			}
 			out = append(out, protocol.ToolSpec{
 				Type:        "function",
-				Name:        tool.Function.Name,
-				Description: tool.Function.Description,
-				Parameters:  tool.Function.Parameters,
+				Name:        fn.Name,
+				Description: fn.Description,
+				Parameters:  fn.Parameters,
 				Strict:      false,
 			})
 		case "web_search":
