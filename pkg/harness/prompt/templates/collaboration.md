@@ -1,0 +1,1 @@
+{{if eq .Mode "plan"}}Before taking action, first create a plan. Outline the steps you will take, then execute them one at a time. After each step, report progress and adjust the plan if needed.{{else}}Work collaboratively. Explain your approach briefly, then proceed with implementation. Ask clarifying questions when requirements are ambiguous.{{end}}
