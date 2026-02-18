@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.4 - 2026-02-18
+### Added
+- **Dynamic system prompt** with marker-based section replacement. The Codex base prompt uses HTML comment markers (`<!-- SECTION_START -->` / `<!-- SECTION_END -->`) to identify tool-specific sections. In proxy mode (default), these sections are replaced with caller's tool context. Future Codex prompt updates just need markers preserved.
+- **`--native-tools` flag** for both `godex exec` and `godex proxy`. Enables full Codex prompt with shell/apply_patch/update_plan instructions. Default is proxy mode.
+- **`native_tools` config option** (`backends.codex.native_tools`) for persistent proxy configuration.
+- **`godex exec` routes through harness** — exec now uses `Harness.StreamTurn` instead of raw client calls, getting the same system prompt treatment as proxy mode.
+
+### Fixed
+- **Gemini tool calls dropped** — OpenAI-compatible harness wasn't flushing pending tool calls when the provider sends tool calls and `finish_reason` in the same SSE chunk. Tool calls were silently lost, producing empty responses. (v0.8.1)
+- **Codex ignoring caller tools** — Codex harness was replacing all caller-provided tools with its internal defaults (shell, apply_patch, update_plan) and prepending the Codex system prompt on top of caller's instructions. (v0.8.2)
+- **Duplicate tool call events** — `function_call_arguments.done` and `response.output_item.done` both emitted tool calls; now only emits on `output_item.done`.
+
 ## 0.8.0 - 2026-02-18
 ### Added
 - **Harness architecture**: Codex, Claude, and OpenAI-compatible harnesses with structured event streaming.

@@ -25,12 +25,12 @@ pkg/harness/openai/    Generic OpenAI-compatible backend (Gemini, Groq, etc.)
 
 ## Data flow (exec)
 
-1. **CLI parses flags** (including `--model` and `--provider-key`)
-2. **Backend is selected** via model-based routing (see table below)
-3. **Request is constructed** from prompt/instructions or `--input-json`
-4. **Backend streams response** via `StreamAndCollect` or `StreamResponses`
-5. **SSE stream parsed** into JSONL events
-6. **Tool events** optionally handled in a loop via `backend.RunToolLoop()`
+1. **CLI parses flags** (including `--model`, `--provider-key`, `--native-tools`)
+2. **Harness Turn is built** from prompt/instructions/tools
+3. **System prompt resolved** — proxy mode (default) strips tool sections; `--native-tools` uses full Codex prompt
+4. **Harness.StreamTurn** routes to the appropriate backend
+5. **SSE stream parsed** into structured harness events
+6. **Tool events** optionally handled in a loop via `harness.RunToolLoop()`
 7. **Output streamed** to stdout (JSONL or text)
 
 ### Backend routing (exec)

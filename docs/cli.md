@@ -21,6 +21,7 @@ Config:
 - `--provider-key <key>` — API key for non-OAuth backends (e.g., Gemini, Groq). Overrides `key_env` config.
 - `--instructions <text>` — system prompt
 - `--append-system-prompt <text>` — appended system prompt
+- `--native-tools` — use Codex native tools (shell, apply_patch, update_plan) instead of proxy mode
 - `--session-id <id>` — optional session identifier
 - `--image <path>` — attach image to the prompt
 - `--web-search` — enable `web_search` tool
@@ -32,6 +33,24 @@ Config:
 - `--json` — JSONL streaming output (for programmatic parsing)
 - `--mock` — enable mock mode
 - `--mock-mode <echo|text|tool-call|tool-loop>` — mock flavor
+
+### System prompt modes
+
+By default, `godex exec` uses **proxy mode**: the Codex base prompt is included
+(personality, planning, task execution, formatting guidance) but tool-specific
+sections (shell, apply_patch, update_plan) are replaced with the caller's tools
+and instructions.
+
+Use `--native-tools` to get the full Codex prompt with all built-in tool
+instructions. This is useful when running Codex as a standalone coding agent:
+
+```bash
+# Proxy mode (default) — caller controls tools
+godex exec --prompt "Read /etc/hostname" --tool read_file:json=schema.json
+
+# Native tools mode — full Codex with shell/apply_patch
+godex exec --native-tools --prompt "Fix the bug in main.go"
+```
 
 ### Multi-backend routing
 

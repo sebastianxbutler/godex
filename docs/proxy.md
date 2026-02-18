@@ -1,8 +1,55 @@
 # Godex Proxy
 
-The Godex proxy exposes an OpenAI‑compatible API and forwards requests to the Codex
-Responses backend. It supports `/v1/responses`, `/v1/models`, and
-`/v1/chat/completions`, with SSE streaming, tool calls, and prompt cache reuse.
+The Godex proxy exposes an OpenAI‑compatible API and routes requests to multiple
+LLM backends via the harness architecture. It supports `/v1/responses`, `/v1/models`,
+and `/v1/chat/completions`, with SSE streaming, tool calls, and prompt cache reuse.
+
+## Harness Architecture
+
+The proxy uses a harness-based routing system. Each backend (Codex, Claude, Gemini)
+is implemented as a harness that translates between the unified API and the
+provider's native format.
+
+### Codex System Prompt (Proxy vs Native Mode)
+
+By default, the Codex harness runs in **proxy mode**:
+- The Codex base prompt is preserved (personality, planning, task execution, formatting)
+- Tool-specific sections are dynamically replaced using HTML comment markers
+- Caller-provided tools and instructions are used directly
+
+Use `--native-tools` to enable **native mode** with the full Codex prompt
+including shell, apply_patch, and update_plan tool instructions.
+
+```bash
+# Default: proxy mode
+godex proxy
+
+# Native mode: full Codex tool instructions
+godex proxy --native-tools
+```
+
+Or via config:
+```yaml
+backends:
+  codex:
+    native_tools: true
+```
+
+### Marker-Based Prompt Replacement
+
+The Codex base prompt (`base_instructions.md`) uses HTML comment markers to
+identify replaceable sections:
+
+```
+<!-- CAPABILITIES_START --> ... <!-- CAPABILITIES_END -->
+<!-- TOOL_USAGE_START --> ... <!-- TOOL_USAGE_END -->
+<!-- TOOL_HINTS_START --> ... <!-- TOOL_HINTS_END -->
+<!-- TOOL_PRESENTATION_START --> ... <!-- TOOL_PRESENTATION_END -->
+<!-- TOOL_GUIDELINES_START --> ... <!-- TOOL_GUIDELINES_END -->
+```
+
+When Codex releases a new base prompt, update `base_instructions.md` and
+preserve the markers. No code changes needed.
 
 ## Endpoints
 

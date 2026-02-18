@@ -391,3 +391,21 @@ Each phase is independently shippable. Phase 1-2 is the critical path for Chrysa
 2. **Should harnesses manage conversation history?** — Currently stateless (caller manages history). For proper agentic loops, the harness might need to track turn state. Decision: keep stateless for now; Chrysalis manages state.
 
 3. **go.mod module path?** — Currently `module godex`. For independent importability, might need `module github.com/rimuru/godex` or similar. Decision: defer until we publish.
+
+---
+
+## Status: ✅ Complete (v0.8.4)
+
+All phases implemented:
+- Phase 1: Core harness interface + events + mock + logger + replay
+- Phase 2: Codex harness with prompt system
+- Phase 3: Claude harness for Anthropic Messages API
+- Phase 4: OpenAI-compatible harness (Gemini, Groq, etc.)
+- Phase 5: Router + Proxy migration to harness interface
+- Phase 6: Legacy `pkg/backend/` removed
+
+Post-refactor improvements (v0.8.1–v0.8.4):
+- Fixed Gemini tool call flushing in OpenAI harness
+- Dynamic system prompt with marker-based section replacement
+- `--native-tools` flag for both exec and proxy
+- `godex exec` routes through harness (consistent prompt treatment)

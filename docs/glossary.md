@@ -59,3 +59,11 @@
 **token-meter** — External service that handles L402 challenges, pricing, and Lightning payments.
 
 **Admin Socket** — Unix socket API for programmatic key/balance management.
+
+**Proxy Mode** — Default system prompt mode for the Codex harness. Preserves the Codex base prompt (personality, planning, task execution, formatting) but dynamically replaces tool-specific sections with caller-provided tool context. Used by both `godex exec` and `godex proxy`.
+
+**Native Tools Mode** — Optional system prompt mode enabled via `--native-tools` flag or `native_tools: true` in config. Uses the full Codex base prompt including shell, apply_patch, and update_plan tool instructions. Useful when running Codex as a standalone coding agent.
+
+**Prompt Markers** — HTML comment tags in `base_instructions.md` that delimit replaceable sections (e.g., `<!-- TOOL_GUIDELINES_START -->` / `<!-- TOOL_GUIDELINES_END -->`). The harness uses these to swap tool-specific content in proxy mode. When updating to a new Codex prompt version, preserve the markers.
+
+**Harness** — A pluggable backend implementation in `pkg/harness/` that translates between the unified godex API and a specific LLM provider's format. Each harness owns model discovery, alias expansion, system prompt construction, and SSE event translation. Current harnesses: Codex, Claude, OpenAI-compatible (Gemini/Groq/etc).

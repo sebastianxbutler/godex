@@ -76,6 +76,7 @@ proxy:
       enabled: true
       base_url: https://chatgpt.com/backend-api/codex
       credentials_path: ""  # default: ~/.codex/auth.json
+      native_tools: false   # true = full Codex prompt with shell/apply_patch/update_plan
     
     anthropic:
       enabled: false  # set to true to enable Claude models

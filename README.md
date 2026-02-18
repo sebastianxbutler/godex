@@ -9,14 +9,18 @@ Godex is a lightweight Go proxy that routes requests to multiple LLM backends:
 - **Custom** — Any OpenAI-compatible provider (Groq, Ollama, vLLM, …)
 
 Features:
+- **Harness architecture** — pluggable backends with structured event streaming
+- **Dynamic system prompts** — marker-based section replacement for Codex base prompt
+- **Proxy mode** (default) — Codex base prompt preserved, tool sections swapped for caller's tools
+- **Native tools mode** — full Codex prompt with shell/apply_patch (`--native-tools`)
 - Streaming SSE responses
-- Tool calls + tool loops (generic `backend.RunToolLoop()`)
+- Tool calls + tool loops (generic `harness.RunToolLoop()`)
 - Automatic model routing by prefix
-- Model aliases (`sonnet` → `claude-sonnet-4-5-20250929`, `gemini` → `gemini-2.5-pro`, `flash` → `gemini-2.5-flash`)
+- Model aliases (`sonnet` → `claude-sonnet-4-6`, `gemini` → `gemini-2.5-pro`, `flash` → `gemini-2.5-flash`)
 - Dynamic model discovery from backends
 - OpenAI-compatible `/v1/chat/completions` and `/v1/responses` endpoints
-- Wire flags for multi-provider compatibility
 - `--provider-key` / `X-Provider-Key` for per-request API key override
+- Audit logging (JSONL with rotation)
 
 If you want a unified API for multiple LLM providers, this is it.
 
