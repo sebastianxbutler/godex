@@ -3,12 +3,10 @@ package aliases
 import (
 	"context"
 	"testing"
-
-	"godex/pkg/backend"
 )
 
 func TestPickLatest(t *testing.T) {
-	models := []backend.ModelInfo{
+	models := []ModelInfo{
 		{ID: "claude-opus-4-5"},
 		{ID: "claude-opus-4-6"},
 		{ID: "claude-opus-4-5-20250929"},
@@ -32,7 +30,7 @@ func TestPickLatest(t *testing.T) {
 }
 
 func TestPickLatestExactMatch(t *testing.T) {
-	models := []backend.ModelInfo{
+	models := []ModelInfo{
 		{ID: "gemini-2.5-pro"},
 		{ID: "gemini-2.5-flash"},
 	}
@@ -43,19 +41,17 @@ func TestPickLatestExactMatch(t *testing.T) {
 }
 
 func TestPickLatestWithSuffix(t *testing.T) {
-	models := []backend.ModelInfo{
+	models := []ModelInfo{
 		{ID: "gpt-4o"},
 		{ID: "gpt-4o-mini"},
 		{ID: "gpt-5.2-codex"},
 		{ID: "gpt-5.3-codex"},
 		{ID: "gpt-5.3"},
 	}
-	// With suffix filter
 	got := pickLatest(models, "gpt-", "-codex", nil)
 	if got != "gpt-5.3-codex" {
 		t.Errorf("pickLatest with suffix = %q, want %q", got, "gpt-5.3-codex")
 	}
-	// Without suffix — picks highest gpt-* alphabetically
 	got = pickLatest(models, "gpt-", "", nil)
 	if got != "gpt-5.3-codex" {
 		t.Errorf("pickLatest no suffix = %q, want %q", got, "gpt-5.3-codex")
@@ -82,7 +78,7 @@ func TestApplyResolutions(t *testing.T) {
 }
 
 func TestResolveBackendNotAvailable(t *testing.T) {
-	results := Resolve(context.Background(), map[string]backend.Backend{}, nil, []Rule{
+	results := Resolve(context.Background(), map[string]ModelLister{}, nil, []Rule{
 		{Alias: "opus", Prefix: "claude-opus-", Backend: "anthropic"},
 	})
 	if len(results) != 1 {
@@ -98,7 +94,6 @@ func TestDefaultRules(t *testing.T) {
 	if len(rules) == 0 {
 		t.Fatal("expected non-empty default rules")
 	}
-	// Verify all rules have required fields
 	for _, r := range rules {
 		if r.Alias == "" || r.Prefix == "" || r.Backend == "" {
 			t.Errorf("incomplete rule: %+v", r)

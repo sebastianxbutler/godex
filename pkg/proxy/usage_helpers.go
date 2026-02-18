@@ -58,12 +58,19 @@ func (s *Server) recordUsage(r *http.Request, key *KeyRecord, status int, usage 
 		Timestamp:        time.Now().UTC(),
 		KeyID:            key.ID,
 		Label:            key.Label,
-		Path:             r.URL.Path,
+		Path:             reqPath(r),
 		Status:           status,
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
 		TotalTokens:      total,
 	})
+}
+
+func reqPath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	return r.URL.Path
 }
 
 func errRateLimited() error {

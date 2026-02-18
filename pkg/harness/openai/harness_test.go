@@ -50,7 +50,7 @@ type mockStreamClient struct {
 	err    error
 }
 
-func (m *mockStreamClient) StreamRaw(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error {
+func (m *mockStreamClient) StreamResponses(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -62,7 +62,7 @@ func (m *mockStreamClient) StreamRaw(ctx context.Context, req protocol.Responses
 	return nil
 }
 
-func (m *mockStreamClient) ListModelsRaw(ctx context.Context) ([]harness.ModelInfo, error) {
+func (m *mockStreamClient) ListModels(ctx context.Context) ([]harness.ModelInfo, error) {
 	return m.models, nil
 }
 
@@ -456,7 +456,7 @@ type multiTurnClient struct {
 	turns     [][]protocol.StreamEvent
 }
 
-func (m *multiTurnClient) StreamRaw(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error {
+func (m *multiTurnClient) StreamResponses(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error {
 	if m.turnIndex >= len(m.turns) {
 		return fmt.Errorf("no more turns")
 	}
@@ -470,6 +470,6 @@ func (m *multiTurnClient) StreamRaw(ctx context.Context, req protocol.ResponsesR
 	return nil
 }
 
-func (m *multiTurnClient) ListModelsRaw(ctx context.Context) ([]harness.ModelInfo, error) {
+func (m *multiTurnClient) ListModels(ctx context.Context) ([]harness.ModelInfo, error) {
 	return nil, nil
 }

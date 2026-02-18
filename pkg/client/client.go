@@ -1,5 +1,5 @@
 // Package client provides backward-compatible access to the Codex backend.
-// New code should use godex/pkg/backend/codex directly.
+// New code should use godex/pkg/harness/codex directly.
 package client
 
 import (
@@ -8,34 +8,32 @@ import (
 	"time"
 
 	"godex/pkg/auth"
-	"godex/pkg/backend"
-	"godex/pkg/backend/codex"
+	harnessCodex "godex/pkg/harness/codex"
 	"godex/pkg/protocol"
 	"godex/pkg/sse"
 )
 
 // Re-export types for backward compatibility.
 type (
-	ToolCall     = backend.ToolCall
-	StreamResult = backend.StreamResult
-	Streamer     = backend.Streamer
-	ToolHandler  = backend.ToolHandler
+	ToolCall     = harnessCodex.ToolCall
+	StreamResult = harnessCodex.StreamResult
+	ToolHandler  = harnessCodex.ToolLoopHandler
 )
 
 // ToolLoopOptions configures the tool execution loop.
-type ToolLoopOptions = backend.ToolLoopOptions
+type ToolLoopOptions = harnessCodex.ToolLoopOptions
 
 // Config holds configuration for the client.
-type Config = codex.Config
+type Config = harnessCodex.ClientConfig
 
-// Client wraps the Codex backend for backward compatibility.
+// Client wraps the Codex harness client for backward compatibility.
 type Client struct {
-	*codex.Client
+	*harnessCodex.Client
 }
 
 // New creates a new client.
 func New(httpClient *http.Client, authStore *auth.Store, cfg Config) *Client {
-	return &Client{Client: codex.New(httpClient, authStore, cfg)}
+	return &Client{Client: harnessCodex.NewClient(httpClient, authStore, cfg)}
 }
 
 // WithBaseURL returns a new client with a different base URL.
@@ -44,7 +42,6 @@ func (c *Client) WithBaseURL(baseURL string) *Client {
 }
 
 // StreamAndCollect streams a request and returns collected output.
-// Returns the client-package StreamResult type.
 func (c *Client) StreamAndCollect(ctx context.Context, req protocol.ResponsesRequest) (StreamResult, error) {
 	return c.Client.StreamAndCollect(ctx, req)
 }
@@ -56,11 +53,14 @@ func (c *Client) RunToolLoop(ctx context.Context, req protocol.ResponsesRequest,
 
 // BuildToolFollowupInputs builds follow-up input items.
 func BuildToolFollowupInputs(calls []ToolCall, outputs map[string]string) []protocol.ResponseInputItem {
-	return codex.BuildToolFollowupInputs(calls, outputs)
+	return harnessCodex.BuildToolFollowupInputs(calls, outputs)
 }
 
+// Streamer is a function type for streaming responses.
+type Streamer func(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error
+
 // StreamAndCollectWith streams using the provided function and returns collected output.
-// Deprecated: Use backend.StreamAndCollect or the client's StreamAndCollect method.
+// Deprecated: Use the client's StreamAndCollect method.
 func StreamAndCollectWith(ctx context.Context, req protocol.ResponsesRequest, stream Streamer) (StreamResult, error) {
 	collector := sse.NewCollector()
 	calls := map[string]ToolCall{}
@@ -85,55 +85,6 @@ func StreamAndCollectWith(ctx context.Context, req protocol.ResponsesRequest, st
 		out.ToolCalls = append(out.ToolCalls, tc)
 	}
 	return out, nil
-}
-
-// RunToolLoopWith executes a tool loop with a custom streamer function.
-// Deprecated: Use the client's RunToolLoop method.
-func RunToolLoopWith(ctx context.Context, req protocol.ResponsesRequest, handler ToolHandler, opts ToolLoopOptions, stream Streamer) (StreamResult, error) {
-	max := opts.MaxSteps
-	if max <= 0 {
-		max = 4
-	}
-	current := req
-
-	for step := 0; step < max; step++ {
-		result, err := StreamAndCollectWith(ctx, current, stream)
-		if err != nil {
-			return StreamResult{}, err
-		}
-		if len(result.ToolCalls) == 0 {
-			return result, nil
-		}
-
-		outputs := map[string]string{}
-		for _, call := range result.ToolCalls {
-			out, herr := handler.Handle(ctx, call)
-			if herr != nil {
-				out = "err: " + herr.Error()
-			}
-			outputs[call.CallID] = out
-		}
-
-		current = followupRequest(req, BuildToolFollowupInputs(result.ToolCalls, outputs))
-	}
-	return StreamResult{}, nil
-}
-
-func followupRequest(base protocol.ResponsesRequest, input []protocol.ResponseInputItem) protocol.ResponsesRequest {
-	return protocol.ResponsesRequest{
-		Model:             base.Model,
-		Instructions:      base.Instructions,
-		Input:             input,
-		Tools:             base.Tools,
-		ToolChoice:        "auto",
-		ParallelToolCalls: base.ParallelToolCalls,
-		Reasoning:         base.Reasoning,
-		Store:             base.Store,
-		Stream:            true,
-		Include:           base.Include,
-		PromptCacheKey:    base.PromptCacheKey,
-		Text:              base.Text,
-	}
 }
 
 // Legacy default URL for reference.

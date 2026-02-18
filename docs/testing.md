@@ -12,7 +12,7 @@ go test ./...
 go test -cover ./...
 
 # Specific package
-go test ./pkg/backend/...
+go test ./pkg/harness/...
 ```
 
 ## Mock modes
@@ -92,7 +92,7 @@ In Chrysalis, these logs are used to validate:
 | pkg/client | 70%+ | 75.6% |
 | pkg/sse | 70%+ | 74.6% |
 | pkg/config | 50%+ | 55.0% |
-| pkg/backend | 50%+ | 45.8% |
+| pkg/harness | 50%+ | 45.8% |
 | pkg/proxy | 50%+ | 29.9% |
 
 ## Suggestions

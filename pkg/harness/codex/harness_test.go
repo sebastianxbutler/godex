@@ -235,14 +235,6 @@ func TestBuildRequest_MessageTypes(t *testing.T) {
 	}
 }
 
-func TestConvertModels(t *testing.T) {
-	// minimal sanity
-	result := ConvertModels(nil)
-	if len(result) != 0 {
-		t.Error("expected empty")
-	}
-}
-
 func TestDefaultTools(t *testing.T) {
 	tools := DefaultTools()
 	if len(tools) != 3 {

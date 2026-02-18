@@ -13,8 +13,8 @@ import (
 
 // Config holds configuration for the OpenAI-compatible harness.
 type Config struct {
-	// Client is the underlying OpenAI-compatible backend client.
-	Client *ClientWrapper
+	// Client is the underlying OpenAI-compatible API client.
+	Client *Client
 
 	// DefaultModel is the model to use when Turn.Model is empty.
 	DefaultModel string
@@ -22,31 +22,13 @@ type Config struct {
 
 // streamClient abstracts the streaming API for testing.
 type streamClient interface {
-	StreamRaw(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error
-	ListModelsRaw(ctx context.Context) ([]harness.ModelInfo, error)
-}
-
-// clientAdapter adapts ClientWrapper to the streamClient interface.
-type clientAdapter struct {
-	w *ClientWrapper
-}
-
-func (a *clientAdapter) StreamRaw(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error {
-	return a.w.StreamRaw(ctx, req, onEvent)
-}
-
-func (a *clientAdapter) ListModelsRaw(ctx context.Context) ([]harness.ModelInfo, error) {
-	models, err := a.w.ListModelsRaw(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return ConvertModels(models), nil
+	StreamResponses(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error
+	ListModels(ctx context.Context) ([]harness.ModelInfo, error)
 }
 
 // Harness implements harness.Harness for any OpenAI Chat Completions-compatible
-// provider. It wraps the existing pkg/backend/openapi client which translates
-// Chat Completions SSE into Codex-format events, then further translates those
-// into structured harness.Event types.
+// provider. It translates Chat Completions SSE into Codex-format events, then
+// further translates those into structured harness.Event types.
 type Harness struct {
 	client       streamClient
 	defaultModel string
@@ -62,7 +44,7 @@ func New(cfg Config) *Harness {
 	}
 	var sc streamClient
 	if cfg.Client != nil {
-		sc = &clientAdapter{w: cfg.Client}
+		sc = cfg.Client
 	}
 	return &Harness{
 		client:       sc,
@@ -84,9 +66,9 @@ func (h *Harness) StreamTurn(ctx context.Context, turn *harness.Turn, onEvent fu
 		return fmt.Errorf("openai: build request: %w", err)
 	}
 
-	// The backend openapi client already translates Chat Completions SSE into
-	// Codex-format protocol.StreamEvent. We translate those into harness.Event.
-	err = h.client.StreamRaw(ctx, req, func(ev sse.Event) error {
+	// The client translates Chat Completions SSE into Codex-format
+	// protocol.StreamEvent. We translate those into harness.Event.
+	err = h.client.StreamResponses(ctx, req, func(ev sse.Event) error {
 		return h.translateEvent(ev.Value, onEvent)
 	})
 	if err != nil {
@@ -125,74 +107,7 @@ func (h *Harness) StreamAndCollect(ctx context.Context, turn *harness.Turn) (*ha
 
 // RunToolLoop executes the full agentic loop with the given tool handler.
 func (h *Harness) RunToolLoop(ctx context.Context, turn *harness.Turn, handler harness.ToolHandler, opts harness.LoopOptions) (*harness.TurnResult, error) {
-	start := time.Now()
-	combined := &harness.TurnResult{}
-	maxTurns := opts.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = 10
-	}
-
-	currentTurn := turn
-	for i := 0; i < maxTurns; i++ {
-		var pendingCalls []harness.ToolCallEvent
-		err := h.StreamTurn(ctx, currentTurn, func(ev harness.Event) error {
-			combined.Events = append(combined.Events, ev)
-			if opts.OnEvent != nil {
-				if err := opts.OnEvent(ev); err != nil {
-					return err
-				}
-			}
-			switch ev.Kind {
-			case harness.EventText:
-				if ev.Text != nil {
-					combined.FinalText += ev.Text.Delta
-					if ev.Text.Complete != "" {
-						combined.FinalText = ev.Text.Complete
-					}
-				}
-			case harness.EventUsage:
-				combined.Usage = ev.Usage
-			case harness.EventToolCall:
-				if ev.ToolCall != nil {
-					pendingCalls = append(pendingCalls, *ev.ToolCall)
-					combined.ToolCalls = append(combined.ToolCalls, *ev.ToolCall)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			combined.Duration = time.Since(start)
-			return combined, err
-		}
-
-		if len(pendingCalls) == 0 {
-			break
-		}
-
-		followupMsgs := make([]harness.Message, 0, len(pendingCalls)*2)
-		for _, call := range pendingCalls {
-			result, err := handler.Handle(ctx, call)
-			if err != nil {
-				combined.Duration = time.Since(start)
-				return combined, err
-			}
-			if result != nil {
-				ev := harness.NewToolResultEvent(result.CallID, result.Output, result.IsError)
-				combined.Events = append(combined.Events, ev)
-			}
-			followupMsgs = append(followupMsgs,
-				harness.Message{Role: "assistant", Content: call.Arguments, Name: call.Name, ToolID: call.CallID},
-				harness.Message{Role: "tool", Content: result.Output, ToolID: call.CallID},
-			)
-		}
-
-		nextTurn := *currentTurn
-		nextTurn.Messages = append(nextTurn.Messages, followupMsgs...)
-		currentTurn = &nextTurn
-	}
-
-	combined.Duration = time.Since(start)
-	return combined, nil
+	return harness.RunToolLoop(ctx, h.StreamTurn, turn, handler, opts)
 }
 
 // ListModels returns available models.
@@ -200,7 +115,7 @@ func (h *Harness) ListModels(ctx context.Context) ([]harness.ModelInfo, error) {
 	if h.client == nil {
 		return nil, fmt.Errorf("openai: no client configured")
 	}
-	return h.client.ListModelsRaw(ctx)
+	return h.client.ListModels(ctx)
 }
 
 // buildRequest translates a harness.Turn into a protocol.ResponsesRequest.

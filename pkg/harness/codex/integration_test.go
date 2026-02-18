@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"godex/pkg/auth"
-	backendCodex "godex/pkg/backend/codex"
 	"godex/pkg/harness"
 )
 
@@ -33,7 +32,7 @@ func newTestHarness(handler http.HandlerFunc) (*Harness, *httptest.Server) {
 	os.WriteFile(authPath, authData, 0o644)
 	store, _ := auth.Load(authPath)
 
-	client := backendCodex.New(nil, store, backendCodex.Config{
+	client := NewClient(nil, store, ClientConfig{
 		BaseURL: server.URL,
 	})
 	h := New(Config{Client: client, DefaultModel: "test-model"})
@@ -70,7 +69,6 @@ func TestStreamTurn_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// text + text + usage + done
 	kinds := make([]harness.EventKind, len(events))
 	for i, e := range events {
 		kinds[i] = e.Kind
@@ -112,7 +110,6 @@ func TestListModels_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Falls back to static list
 	if len(models) == 0 {
 		t.Error("expected some models")
 	}
@@ -187,11 +184,9 @@ func TestRunToolLoop_Integration(t *testing.T) {
 		callCount++
 		w.Header().Set("Content-Type", "text/event-stream")
 		if callCount == 1 {
-			// First call: emit a tool call
 			fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.output_item.done","item":{"type":"function_call","call_id":"c1","name":"shell","arguments":"{\"command\":[\"echo\",\"hi\"]}"}}`)
 			fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}}`)
 		} else {
-			// Second call: emit text
 			fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.output_text.delta","delta":"done"}`)
 			fmt.Fprintf(w, "data: %s\n\n", `{"type":"response.completed","response":{"usage":{"input_tokens":15,"output_tokens":3}}}`)
 		}

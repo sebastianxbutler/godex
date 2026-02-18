@@ -18,11 +18,8 @@ import (
 
 	"godex/pkg/aliases"
 	"godex/pkg/auth"
-	"godex/pkg/backend"
-	"godex/pkg/backend/anthropic"
-	backendCodex "godex/pkg/backend/codex"
-	"godex/pkg/backend/openapi"
 	"godex/pkg/config"
+	"godex/pkg/harness"
 	harnessClaudeP "godex/pkg/harness/claude"
 	harnessCodexP "godex/pkg/harness/codex"
 	harnessOpenaiP "godex/pkg/harness/openai"
@@ -225,8 +222,8 @@ func runExec(args []string) error {
 		return emitMockStream(req, jsonOnly, logResponses, mockMode)
 	}
 
-	// Resolve backend based on model name
-	be, err := resolveBackend(model, store, cfg, allowRefresh, sessionID, providerKey)
+	// Resolve backend client based on model name
+	client, err := resolveClient(model, store, cfg, allowRefresh, sessionID, providerKey)
 	if err != nil {
 		return err
 	}
@@ -236,7 +233,7 @@ func runExec(args []string) error {
 
 	// Inject provider key into context if provided
 	if providerKey != "" {
-		ctx = backend.WithProviderKey(ctx, providerKey)
+		ctx = harness.WithProviderKey(ctx, providerKey)
 	}
 
 	if autoTools {
@@ -245,7 +242,7 @@ func runExec(args []string) error {
 			return err
 		}
 		handler := staticToolHandler{outputs: outputs}
-		result, err := backend.RunToolLoop(ctx, be, req, handler, backend.ToolLoopOptions{MaxSteps: cfg.Exec.AutoToolsMax})
+		result, err := client.RunToolLoop(ctx, req, handler, harnessCodexP.ToolLoopOptions{MaxSteps: cfg.Exec.AutoToolsMax})
 		if err != nil {
 			return err
 		}
@@ -256,7 +253,7 @@ func runExec(args []string) error {
 	}
 
 	collector := sse.NewCollector()
-	return be.StreamResponses(ctx, req, func(ev sse.Event) error {
+	return client.StreamResponses(ctx, req, func(ev sse.Event) error {
 		collector.Observe(ev.Value)
 		if logResponses != "" {
 			if f, err := os.OpenFile(logResponses, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
@@ -709,14 +706,13 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 		if baseURL == "" {
 			baseURL = proxyCfg.BaseURL
 		}
-		// We need an auth store for the codex client
 		authPath := cfg.Auth.Path
 		if authPath == "" {
 			authPath, _ = auth.DefaultPath()
 		}
 		store, err := auth.Load(authPath)
 		if err == nil {
-			codexClient := backendCodex.New(nil, store, backendCodex.Config{
+			codexClient := harnessCodexP.NewClient(nil, store, harnessCodexP.ClientConfig{
 				BaseURL:      baseURL,
 				Originator:   proxyCfg.Originator,
 				UserAgent:    proxyCfg.UserAgent,
@@ -732,13 +728,13 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 
 	// Register Claude harness
 	if cfg.Proxy.Backends.Anthropic.Enabled {
-		anthTokens := anthropic.NewTokenStore(cfg.Proxy.Backends.Anthropic.CredentialsPath)
+		anthTokens := harnessClaudeP.NewTokenStore(cfg.Proxy.Backends.Anthropic.CredentialsPath)
 		if err := anthTokens.Load(); err == nil {
 			wrapper := harnessClaudeP.NewClientWrapper(anthTokens, harnessClaudeP.ClientConfig{
 				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
 			})
 			h := harnessClaudeP.New(harnessClaudeP.Config{
-				Client:       wrapper,
+				Client:           wrapper,
 				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
 			})
 			r.Register("claude", h)
@@ -751,7 +747,7 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 		if !bcfg.IsEnabled() || bcfg.Type != "openai" {
 			continue
 		}
-		oaiClient, err := openapi.New(openapi.Config{
+		oaiClient, err := harnessOpenaiP.NewClient(harnessOpenaiP.ClientConfig{
 			Name:      name,
 			BaseURL:   bcfg.BaseURL,
 			Auth:      bcfg.Auth,
@@ -762,9 +758,8 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 		if err != nil {
 			continue
 		}
-		wrapper := harnessOpenaiP.NewClientWrapper(oaiClient)
 		h := harnessOpenaiP.New(harnessOpenaiP.Config{
-			Client: wrapper,
+			Client: oaiClient,
 		})
 		r.Register(name, h)
 		registered++
@@ -776,24 +771,53 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 	return r
 }
 
+// aliasModelLister adapts a harness to the aliases.ModelLister interface.
+type aliasModelLister struct {
+	listFn func(ctx context.Context) ([]aliases.ModelInfo, error)
+}
+
+func (a *aliasModelLister) ListModels(ctx context.Context) ([]aliases.ModelInfo, error) {
+	return a.listFn(ctx)
+}
+
 func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	backends := map[string]backend.Backend{}
+	backends := map[string]aliases.ModelLister{}
 
 	if cfg.Proxy.Backends.Codex.Enabled {
-		codexBe := backendCodex.New(nil, nil, backendCodex.Config{})
-		backends["codex"] = codexBe
+		codexClient := harnessCodexP.NewClient(nil, nil, harnessCodexP.ClientConfig{})
+		backends["codex"] = &aliasModelLister{listFn: func(ctx context.Context) ([]aliases.ModelInfo, error) {
+			models, err := codexClient.ListModels(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]aliases.ModelInfo, len(models))
+			for i, m := range models {
+				out[i] = aliases.ModelInfo{ID: m.ID, DisplayName: m.Name}
+			}
+			return out, nil
+		}}
 	}
 
 	if cfg.Proxy.Backends.Anthropic.Enabled {
-		be, err := anthropic.New(anthropic.Config{
-			CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
-			DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
-		})
-		if err == nil {
-			backends["anthropic"] = be
+		anthTokens := harnessClaudeP.NewTokenStore(cfg.Proxy.Backends.Anthropic.CredentialsPath)
+		if err := anthTokens.Load(); err == nil {
+			wrapper := harnessClaudeP.NewClientWrapper(anthTokens, harnessClaudeP.ClientConfig{
+				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+			})
+			backends["anthropic"] = &aliasModelLister{listFn: func(ctx context.Context) ([]aliases.ModelInfo, error) {
+				models, err := wrapper.ListModels(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out := make([]aliases.ModelInfo, len(models))
+				for i, m := range models {
+					out[i] = aliases.ModelInfo{ID: m.ID, DisplayName: m.Name}
+				}
+				return out, nil
+			}}
 		}
 	}
 
@@ -805,7 +829,7 @@ func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.
 		if authCfg.Key == "" && authCfg.KeyEnv != "" {
 			authCfg.Key = os.Getenv(authCfg.KeyEnv)
 		}
-		be, err := openapi.New(openapi.Config{
+		oaiClient, err := harnessOpenaiP.NewClient(harnessOpenaiP.ClientConfig{
 			Name:      name,
 			BaseURL:   bcfg.BaseURL,
 			Auth:      authCfg,
@@ -813,7 +837,18 @@ func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.
 			Models:    bcfg.Models,
 		})
 		if err == nil {
-			backends[name] = be
+			c := oaiClient // capture for closure
+			backends[name] = &aliasModelLister{listFn: func(ctx context.Context) ([]aliases.ModelInfo, error) {
+				models, err := c.ListModels(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out := make([]aliases.ModelInfo, len(models))
+				for i, m := range models {
+					out[i] = aliases.ModelInfo{ID: m.ID, DisplayName: m.Name}
+				}
+				return out, nil
+			}}
 		}
 	}
 
@@ -829,9 +864,7 @@ func syncAliasesOnStartup(cfg config.Config, configPath string, proxyCfg *proxy.
 	results := aliases.Resolve(ctx, backends, current, nil)
 	n := aliases.ApplyResolutions(current, results)
 	if n > 0 {
-		// Update the proxy config in memory
 		proxyCfg.Backends.Routing.Aliases = current
-		// Persist to disk
 		if err := config.UpdateAliases(configPath, current); err != nil {
 			fmt.Fprintf(os.Stderr, "⚠️  alias save: %v\n", err)
 		} else {
@@ -1449,60 +1482,24 @@ var execCommand = func(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
 }
 
-// resolveBackend picks the right backend based on model name.
-// For Codex models, uses OAuth. For others, uses the OpenAPI backend
-// with provider key from flag, env, or config.
-func resolveBackend(model string, store *auth.Store, cfg config.Config, allowRefresh bool, sessionID, providerKey string) (backend.Backend, error) {
-	m := strings.ToLower(model)
+// streamClient is a unified interface for exec streaming.
+// Both codex.Client and openai.Client implement StreamResponses and StreamAndCollect.
+type streamClient interface {
+	StreamResponses(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error
+	RunToolLoop(ctx context.Context, req protocol.ResponsesRequest, handler harnessCodexP.ToolLoopHandler, opts harnessCodexP.ToolLoopOptions) (harnessCodexP.StreamResult, error)
+}
 
-	// Anthropic models
-	if strings.HasPrefix(m, "claude-") || m == "sonnet" || m == "opus" || m == "haiku" {
-		return anthropic.New(anthropic.Config{
-			CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
-			DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
-		})
-	}
-
-	// Gemini models
-	if strings.HasPrefix(m, "gemini-") {
-		key := providerKey
-		if key == "" {
-			key = os.Getenv("GEMINI_API_KEY")
-		}
-		return openapi.New(openapi.Config{
-			Name:    "gemini",
-			BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
-			Auth:    config.BackendAuthConfig{Type: "api_key", Key: key},
-		})
-	}
-
-	// Check custom backends from config
-	for name, bcfg := range cfg.Proxy.Backends.Custom {
-		if !bcfg.IsEnabled() {
-			continue
-		}
-		for _, pattern := range cfg.Proxy.Backends.Routing.Patterns[name] {
-			if strings.HasPrefix(m, strings.TrimSuffix(pattern, "-")+"-") || m == strings.TrimSuffix(pattern, "-") {
-				authCfg := bcfg.Auth
-				if providerKey != "" {
-					authCfg = config.BackendAuthConfig{Type: "api_key", Key: providerKey}
-				}
-				return openapi.New(openapi.Config{
-					Name:    name,
-					BaseURL: bcfg.BaseURL,
-					Auth:    authCfg,
-					Models:  bcfg.Models,
-				})
-			}
-		}
-	}
-
-	// Default: Codex
+// resolveClient picks the right client based on model name.
+// For Codex models, uses OAuth. For others, uses the OpenAI-compatible client.
+func resolveClient(model string, store *auth.Store, cfg config.Config, allowRefresh bool, sessionID, providerKey string) (*harnessCodexP.Client, error) {
+	// For now, all exec paths use the Codex-wire-format client.
+	// The Codex endpoint handles routing for non-Codex models via the proxy.
+	// Direct Anthropic/Gemini exec would need the harness path, but that's a future enhancement.
 	baseURL := cfg.Client.BaseURL
 	if baseURL == "" {
 		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
-	c := backendCodex.New(nil, store, backendCodex.Config{
+	c := harnessCodexP.NewClient(nil, store, harnessCodexP.ClientConfig{
 		SessionID:    sessionID,
 		AllowRefresh: allowRefresh,
 		BaseURL:      baseURL,
@@ -1570,28 +1567,45 @@ func runAliasesUpdate(args []string) error {
 	defer cancel()
 
 	// Build available backends
-	backends := map[string]backend.Backend{}
+	backends := map[string]aliases.ModelLister{}
 
-		// Codex (uses OpenAI API for discovery if OPENAI_API_KEY is set, else static list)
 	if cfg.Proxy.Backends.Codex.Enabled {
-		codexBe := backendCodex.New(nil, nil, backendCodex.Config{})
-		backends["codex"] = codexBe
+		codexClient := harnessCodexP.NewClient(nil, nil, harnessCodexP.ClientConfig{})
+		backends["codex"] = &aliasModelLister{listFn: func(ctx context.Context) ([]aliases.ModelInfo, error) {
+			models, err := codexClient.ListModels(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]aliases.ModelInfo, len(models))
+			for i, m := range models {
+				out[i] = aliases.ModelInfo{ID: m.ID, DisplayName: m.Name}
+			}
+			return out, nil
+		}}
 	}
 
-	// Anthropic
 	if cfg.Proxy.Backends.Anthropic.Enabled {
-		be, err := anthropic.New(anthropic.Config{
-			CredentialsPath:  cfg.Proxy.Backends.Anthropic.CredentialsPath,
-			DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
-		})
-		if err == nil {
-			backends["anthropic"] = be
+		anthTokens := harnessClaudeP.NewTokenStore(cfg.Proxy.Backends.Anthropic.CredentialsPath)
+		if err := anthTokens.Load(); err == nil {
+			wrapper := harnessClaudeP.NewClientWrapper(anthTokens, harnessClaudeP.ClientConfig{
+				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+			})
+			backends["anthropic"] = &aliasModelLister{listFn: func(ctx context.Context) ([]aliases.ModelInfo, error) {
+				models, err := wrapper.ListModels(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out := make([]aliases.ModelInfo, len(models))
+				for i, m := range models {
+					out[i] = aliases.ModelInfo{ID: m.ID, DisplayName: m.Name}
+				}
+				return out, nil
+			}}
 		} else {
 			fmt.Fprintf(os.Stderr, "⚠️  anthropic: %v\n", err)
 		}
 	}
 
-	// Custom backends (including gemini)
 	for name, bcfg := range cfg.Proxy.Backends.Custom {
 		if !bcfg.IsEnabled() {
 			continue
@@ -1600,7 +1614,7 @@ func runAliasesUpdate(args []string) error {
 		if authCfg.Key == "" && authCfg.KeyEnv != "" {
 			authCfg.Key = os.Getenv(authCfg.KeyEnv)
 		}
-		be, err := openapi.New(openapi.Config{
+		oaiClient, err := harnessOpenaiP.NewClient(harnessOpenaiP.ClientConfig{
 			Name:      name,
 			BaseURL:   bcfg.BaseURL,
 			Auth:      authCfg,
@@ -1608,7 +1622,18 @@ func runAliasesUpdate(args []string) error {
 			Models:    bcfg.Models,
 		})
 		if err == nil {
-			backends[name] = be
+			c := oaiClient
+			backends[name] = &aliasModelLister{listFn: func(ctx context.Context) ([]aliases.ModelInfo, error) {
+				models, err := c.ListModels(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out := make([]aliases.ModelInfo, len(models))
+				for i, m := range models {
+					out[i] = aliases.ModelInfo{ID: m.ID, DisplayName: m.Name}
+				}
+				return out, nil
+			}}
 		} else {
 			fmt.Fprintf(os.Stderr, "⚠️  %s: %v\n", name, err)
 		}
@@ -1625,7 +1650,7 @@ func runAliasesUpdate(args []string) error {
 
 	results := aliases.Resolve(ctx, backends, current, nil)
 
-	// Display results
+	// Display
 	anyChanged := false
 	for _, r := range results {
 		if r.Error != "" {

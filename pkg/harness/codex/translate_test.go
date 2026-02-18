@@ -256,9 +256,9 @@ func TestDefaultHarnessTools(t *testing.T) {
 	}
 }
 
-func TestNewClientWrapper(t *testing.T) {
-	w := NewClientWrapper(nil)
-	if w == nil {
-		t.Fatal("expected non-nil wrapper")
+func TestNewClient(t *testing.T) {
+	c := NewClient(nil, nil, ClientConfig{})
+	if c == nil {
+		t.Fatal("expected non-nil client")
 	}
 }

@@ -118,75 +118,7 @@ func (h *Harness) StreamAndCollect(ctx context.Context, turn *harness.Turn) (*ha
 
 // RunToolLoop executes the full agentic loop.
 func (h *Harness) RunToolLoop(ctx context.Context, turn *harness.Turn, handler harness.ToolHandler, opts harness.LoopOptions) (*harness.TurnResult, error) {
-	start := time.Now()
-	combined := &harness.TurnResult{}
-	maxTurns := opts.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = 10
-	}
-
-	currentTurn := turn
-	for i := 0; i < maxTurns; i++ {
-		var pendingCalls []harness.ToolCallEvent
-		err := h.StreamTurn(ctx, currentTurn, func(ev harness.Event) error {
-			combined.Events = append(combined.Events, ev)
-			if opts.OnEvent != nil {
-				if err := opts.OnEvent(ev); err != nil {
-					return err
-				}
-			}
-			switch ev.Kind {
-			case harness.EventText:
-				if ev.Text != nil {
-					combined.FinalText += ev.Text.Delta
-					if ev.Text.Complete != "" {
-						combined.FinalText = ev.Text.Complete
-					}
-				}
-			case harness.EventUsage:
-				combined.Usage = ev.Usage
-			case harness.EventToolCall:
-				if ev.ToolCall != nil {
-					pendingCalls = append(pendingCalls, *ev.ToolCall)
-					combined.ToolCalls = append(combined.ToolCalls, *ev.ToolCall)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			combined.Duration = time.Since(start)
-			return combined, err
-		}
-
-		if len(pendingCalls) == 0 {
-			break
-		}
-
-		// Execute tools and build follow-up messages
-		followupMsgs := make([]harness.Message, 0, len(pendingCalls)*2)
-		for _, call := range pendingCalls {
-			result, err := handler.Handle(ctx, call)
-			if err != nil {
-				combined.Duration = time.Since(start)
-				return combined, err
-			}
-			if result != nil {
-				ev := harness.NewToolResultEvent(result.CallID, result.Output, result.IsError)
-				combined.Events = append(combined.Events, ev)
-			}
-			followupMsgs = append(followupMsgs,
-				harness.Message{Role: "assistant", Content: call.Arguments, Name: call.Name, ToolID: call.CallID},
-				harness.Message{Role: "tool", Content: result.Output, ToolID: call.CallID},
-			)
-		}
-
-		nextTurn := *currentTurn
-		nextTurn.Messages = append(nextTurn.Messages, followupMsgs...)
-		currentTurn = &nextTurn
-	}
-
-	combined.Duration = time.Since(start)
-	return combined, nil
+	return harness.RunToolLoop(ctx, h.StreamTurn, turn, handler, opts)
 }
 
 // ListModels returns available Claude models.

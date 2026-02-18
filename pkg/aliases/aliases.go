@@ -7,9 +7,18 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"godex/pkg/backend"
 )
+
+// ModelInfo describes an available model.
+type ModelInfo struct {
+	ID          string
+	DisplayName string
+}
+
+// ModelLister can list available models.
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]ModelInfo, error)
+}
 
 // Rule defines how an alias maps to a model family.
 // The resolver queries the specified backend and picks the latest model
@@ -53,10 +62,10 @@ type Resolution struct {
 }
 
 // Resolve queries the given backends and resolves aliases to the latest model.
-// backends is a map of backend name → Backend instance.
+// backends is a map of backend name → ModelLister instance.
 // current is the existing alias map (may be nil).
 // rules defines which aliases to resolve; if nil, DefaultRules() is used.
-func Resolve(ctx context.Context, backends map[string]backend.Backend, current map[string]string, rules []Rule) []Resolution {
+func Resolve(ctx context.Context, backends map[string]ModelLister, current map[string]string, rules []Rule) []Resolution {
 	if rules == nil {
 		rules = DefaultRules()
 	}
@@ -65,7 +74,7 @@ func Resolve(ctx context.Context, backends map[string]backend.Backend, current m
 	}
 
 	// Cache model lists per backend
-	modelCache := map[string][]backend.ModelInfo{}
+	modelCache := map[string][]ModelInfo{}
 
 	var results []Resolution
 	for _, rule := range rules {
@@ -109,9 +118,7 @@ func Resolve(ctx context.Context, backends map[string]backend.Backend, current m
 }
 
 // pickLatest finds the latest model matching the given prefix.
-// It sorts matching models lexicographically descending (higher version numbers
-// and later dates sort later) and returns the last one.
-func pickLatest(models []backend.ModelInfo, prefix, suffix string, exclude []string) string {
+func pickLatest(models []ModelInfo, prefix, suffix string, exclude []string) string {
 	var matches []string
 outer:
 	for _, m := range models {
@@ -128,7 +135,6 @@ outer:
 		}
 	}
 	if len(matches) == 0 {
-		// Exact match fallback (e.g. prefix "gemini-2.5-pro" matches "gemini-2.5-pro")
 		for _, m := range models {
 			if m.ID == prefix {
 				return m.ID

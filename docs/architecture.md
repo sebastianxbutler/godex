@@ -10,17 +10,17 @@ pkg/auth/               auth.json loader + refresh handling
 pkg/protocol/           request/response types + tool schema
 pkg/sse/                SSE parser + collector
 pkg/client/             streaming + tool loop helpers (legacy)
-pkg/backend/            Backend interface + router + generic tool loop
-pkg/backend/backend.go  Backend interface definition
-pkg/backend/toolloop.go Generic RunToolLoop (works with any Backend)
-pkg/backend/context.go  WithProviderKey / ProviderKey context helpers
-pkg/backend/codex/      Codex/ChatGPT backend
-pkg/backend/anthropic/  Anthropic Messages API backend
-pkg/backend/openapi/    Generic OpenAI-compatible backend (Gemini, Groq, etc.)
+pkg/harness/            Backend interface + router + generic tool loop
+pkg/harness/backend.go  Backend interface definition
+pkg/harness/toolloop.go Generic RunToolLoop (works with any Backend)
+pkg/harness/context.go  WithProviderKey / ProviderKey context helpers
+pkg/harness/codex/      Codex/ChatGPT backend
+pkg/harness/claude/  Anthropic Messages API backend
+pkg/harness/openai/    Generic OpenAI-compatible backend (Gemini, Groq, etc.)
 ```
 
 > **Note:** The OpenAI-compatible backend package was renamed from
-> `pkg/backend/openai/` to `pkg/backend/openapi/` to better reflect that it
+> `pkg/harness/openai/` to `pkg/harness/openai/` to better reflect that it
 > implements the OpenAI *wire format* (not the OpenAI service specifically).
 
 ## Data flow (exec)
@@ -44,7 +44,7 @@ pkg/backend/openapi/    Generic OpenAI-compatible backend (Gemini, Groq, etc.)
 
 ## Generic tool loop
 
-`backend.RunToolLoop()` in `pkg/backend/toolloop.go` is a backend-agnostic tool
+`backend.RunToolLoop()` in `pkg/harness/toolloop.go` is a backend-agnostic tool
 loop that works with any implementation of the `Backend` interface:
 
 ```go
@@ -59,11 +59,11 @@ The loop:
 3. Builds follow-up input items (`function_call` + `function_call_output` pairs)
 4. Repeats until no tool calls remain or `MaxSteps` is exceeded
 
-This replaces the Codex-specific tool loop that lived in `pkg/backend/codex/toolloop.go`.
+This replaces the Codex-specific tool loop that lived in `pkg/harness/codex/toolloop.go`.
 
 ## Provider key context helpers
 
-`pkg/backend/context.go` provides two functions for threading per-request API
+`pkg/harness/context.go` provides two functions for threading per-request API
 keys through the call stack without changing function signatures:
 
 ```go
@@ -146,7 +146,7 @@ Uses the official `anthropic-sdk-go` with OAuth authentication:
 - Requires `anthropic-beta: oauth-2025-04-20` header
 - Translates OpenAI format ↔ Anthropic Messages API
 
-### OpenAPI backend (`pkg/backend/openapi/`)
+### OpenAPI backend (`pkg/harness/openai/`)
 
 A generic backend for any OpenAI-compatible endpoint:
 - Used for Gemini, Groq, vLLM, Ollama, and user-defined custom backends

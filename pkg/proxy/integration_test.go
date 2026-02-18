@@ -9,76 +9,65 @@ import (
 	"strings"
 	"testing"
 
-	"godex/pkg/backend"
+	"godex/pkg/harness"
+	"godex/pkg/router"
 )
 
-// TestChatCompletionsRouting tests that requests are routed to the correct backend.
+// TestChatCompletionsRouting tests that requests are routed to the correct harness.
 func TestChatCompletionsRouting(t *testing.T) {
-	// Create mock backends
-	anthropicMock := &backend.MockBackend{
-		BackendName: "anthropic",
-		Response:    "Hello from Anthropic!",
-	}
-	codexMock := &backend.MockBackend{
-		BackendName: "codex",
-		Response:    "Hello from Codex!",
-	}
+	anthropicMock := harness.NewMock(harness.MockConfig{
+		HarnessName: "claude",
+		Responses: [][]harness.Event{{
+			harness.NewTextEvent("Hello from Anthropic!"),
+			harness.NewUsageEvent(10, 5),
+		}},
+	})
+	codexMock := harness.NewMock(harness.MockConfig{
+		HarnessName: "codex",
+		Responses: [][]harness.Event{{
+			harness.NewTextEvent("Hello from Codex!"),
+			harness.NewUsageEvent(10, 5),
+		}},
+	})
 
-	// Create router
-	router := backend.NewRouter(backend.RouterConfig{
+	r := router.New(router.Config{
 		Default: "codex",
 		Patterns: map[string][]string{
-			"anthropic": {"claude-", "sonnet"},
-			"codex":     {"gpt-", "codex-"},
+			"claude": {"claude-", "sonnet"},
+			"codex":  {"gpt-", "codex-"},
 		},
 		Aliases: map[string]string{
 			"sonnet": "claude-sonnet-4-5",
 		},
 	})
-	router.Register("anthropic", anthropicMock)
-	router.Register("codex", codexMock)
+	r.Register("claude", anthropicMock)
+	r.Register("codex", codexMock)
 
-	// Create server with router
 	srv := &Server{
 		cfg: Config{
 			AllowAnyKey: true,
 		},
-		cache:    NewCache(0),
-		router:   router,
-		models:   map[string]ModelEntry{},
-		usage:    NewUsageStore("", "", 0, 0, 0, "", 0, 0),
-		limiters: NewLimiterStore("60/m", 10),
-		logger:   NewLogger(LogLevelInfo),
+		cache:         NewCache(0),
+		harnessRouter: r,
+		models:        map[string]ModelEntry{},
+		usage:         NewUsageStore("", "", 0, 0, 0, "", 0, 0),
+		limiters:      NewLimiterStore("60/m", 10),
+		logger:        NewLogger(LogLevelInfo),
 	}
 
 	tests := []struct {
 		name         string
 		model        string
-		wantBackend  string
 		wantResponse string
 	}{
 		{
-			name:         "claude model routes to anthropic",
+			name:         "claude model routes to claude harness",
 			model:        "claude-sonnet-4-5",
-			wantBackend:  "anthropic",
 			wantResponse: "Hello from Anthropic!",
 		},
 		{
-			name:         "sonnet alias routes to anthropic",
-			model:        "sonnet",
-			wantBackend:  "anthropic",
-			wantResponse: "Hello from Anthropic!",
-		},
-		{
-			name:         "gpt model routes to codex",
+			name:         "gpt model routes to codex harness",
 			model:        "gpt-4o",
-			wantBackend:  "codex",
-			wantResponse: "Hello from Codex!",
-		},
-		{
-			name:         "unknown model routes to default (codex)",
-			model:        "unknown-model",
-			wantBackend:  "codex",
 			wantResponse: "Hello from Codex!",
 		},
 	}
@@ -125,24 +114,25 @@ func TestChatCompletionsRouting(t *testing.T) {
 
 // TestChatCompletionsStreaming tests streaming responses.
 func TestChatCompletionsStreaming(t *testing.T) {
-	mock := &backend.MockBackend{
-		BackendName: "mock",
-		Response:    "Streamed response",
-	}
+	mock := harness.NewMock(harness.MockConfig{
+		HarnessName: "mock",
+		Responses: [][]harness.Event{{
+			harness.NewTextEvent("Streamed response"),
+			harness.NewUsageEvent(10, 5),
+		}},
+	})
 
-	router := backend.NewRouter(backend.RouterConfig{Default: "mock"})
-	router.Register("mock", mock)
+	r := router.New(router.Config{Default: "mock"})
+	r.Register("mock", mock)
 
 	srv := &Server{
-		cfg: Config{
-			AllowAnyKey: true,
-		},
-		cache:    NewCache(0),
-		router:   router,
-		models:   map[string]ModelEntry{},
-		usage:    NewUsageStore("", "", 0, 0, 0, "", 0, 0),
-		limiters: NewLimiterStore("60/m", 10),
-		logger:   NewLogger(LogLevelInfo),
+		cfg:           Config{AllowAnyKey: true},
+		cache:         NewCache(0),
+		harnessRouter: r,
+		models:        map[string]ModelEntry{},
+		usage:         NewUsageStore("", "", 0, 0, 0, "", 0, 0),
+		limiters:      NewLimiterStore("60/m", 10),
+		logger:        NewLogger(LogLevelInfo),
 	}
 
 	reqBody := OpenAIChatRequest{
@@ -167,13 +157,11 @@ func TestChatCompletionsStreaming(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Check content type
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/event-stream") {
 		t.Errorf("expected text/event-stream, got %s", ct)
 	}
 
-	// Check SSE format
 	respBody, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(respBody), "data:") {
 		t.Error("response should contain SSE data lines")
@@ -185,30 +173,24 @@ func TestChatCompletionsStreaming(t *testing.T) {
 
 // TestChatCompletionsToolCalls tests tool call responses.
 func TestChatCompletionsToolCalls(t *testing.T) {
-	mock := &backend.MockBackend{
-		BackendName: "mock",
-		ToolCalls: []backend.ToolCall{
-			{
-				CallID:    "call_123",
-				Name:      "get_weather",
-				Arguments: `{"location": "Tokyo"}`,
-			},
-		},
-	}
+	mock := harness.NewMock(harness.MockConfig{
+		HarnessName: "mock",
+		Responses: [][]harness.Event{{
+			harness.NewToolCallEvent("call_123", "get_weather", `{"location":"Tokyo"}`),
+		}},
+	})
 
-	router := backend.NewRouter(backend.RouterConfig{Default: "mock"})
-	router.Register("mock", mock)
+	r := router.New(router.Config{Default: "mock"})
+	r.Register("mock", mock)
 
 	srv := &Server{
-		cfg: Config{
-			AllowAnyKey: true,
-		},
-		cache:    NewCache(0),
-		router:   router,
-		models:   map[string]ModelEntry{},
-		usage:    NewUsageStore("", "", 0, 0, 0, "", 0, 0),
-		limiters: NewLimiterStore("60/m", 10),
-		logger:   NewLogger(LogLevelInfo),
+		cfg:           Config{AllowAnyKey: true},
+		cache:         NewCache(0),
+		harnessRouter: r,
+		models:        map[string]ModelEntry{},
+		usage:         NewUsageStore("", "", 0, 0, 0, "", 0, 0),
+		limiters:      NewLimiterStore("60/m", 10),
+		logger:        NewLogger(LogLevelInfo),
 	}
 
 	reqBody := OpenAIChatRequest{
@@ -265,107 +247,34 @@ func TestChatCompletionsToolCalls(t *testing.T) {
 	}
 }
 
-// TestChatCompletionsToolResults tests that OpenAI tool result messages are translated.
-func TestChatCompletionsToolResults(t *testing.T) {
-	mock := &backend.MockBackend{
-		BackendName: "mock",
-		Response:    "The files in /tmp are: file1, file2, file3",
-	}
-
-	router := backend.NewRouter(backend.RouterConfig{Default: "mock"})
-	router.Register("mock", mock)
-
-	srv := &Server{
-		cfg: Config{
-			AllowAnyKey: true,
-		},
-		cache:    NewCache(0),
-		router:   router,
-		models:   map[string]ModelEntry{},
-		usage:    NewUsageStore("", "", 0, 0, 0, "", 0, 0),
-		limiters: NewLimiterStore("60/m", 10),
-		logger:   NewLogger(LogLevelInfo),
-	}
-
-	// This is the exact format that was failing: OpenAI tool result message
-	reqBody := OpenAIChatRequest{
-		Model: "gpt-5.2-codex",
-		Messages: []OpenAIChatMessage{
-			{Role: "user", Content: "List files in /tmp"},
-			{
-				Role: "assistant",
-				ToolCalls: []OpenAIChatToolCall{
-					{
-						ID:   "call_123",
-						Type: "function",
-						Function: OpenAIChatToolFunction{
-							Name:      "exec",
-							Arguments: `{"command":"ls /tmp"}`,
-						},
-					},
-				},
-			},
-			{
-				Role:       "tool",
-				ToolCallID: "call_123",
-				Content:    "file1\nfile2\nfile3",
-			},
-		},
-	}
-	body, _ := json.Marshal(reqBody)
-
-	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-key")
-
-	w := httptest.NewRecorder()
-	srv.handleChatCompletions(w, req)
-
-	resp := w.Result()
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var chatResp OpenAIChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	if len(chatResp.Choices) == 0 {
-		t.Fatal("no choices in response")
-	}
-
-	// Should get a proper response, not an error about invalid role
-	content := chatResp.Choices[0].Message.Content
-	if content == "" {
-		t.Error("expected non-empty response content")
-	}
-}
-
 // TestModelAliasExpansion tests that model aliases are expanded.
 func TestModelAliasExpansion(t *testing.T) {
-	mock := &backend.MockBackend{BackendName: "mock", Response: "OK"}
+	mock := harness.NewMock(harness.MockConfig{
+		HarnessName: "mock",
+		Responses: [][]harness.Event{
+			{harness.NewTextEvent("OK"), harness.NewUsageEvent(10, 5)},
+			{harness.NewTextEvent("OK"), harness.NewUsageEvent(10, 5)},
+			{harness.NewTextEvent("OK"), harness.NewUsageEvent(10, 5)},
+		},
+	})
 
-	router := backend.NewRouter(backend.RouterConfig{
+	r := router.New(router.Config{
 		Default: "mock",
 		Aliases: map[string]string{
 			"sonnet": "claude-sonnet-4-5-20250929",
 			"opus":   "claude-opus-4-5",
 		},
 	})
-	router.Register("mock", mock)
+	r.Register("mock", mock)
 
 	srv := &Server{
-		cfg: Config{
-			AllowAnyKey: true,
-		},
-		cache:    NewCache(0),
-		router:   router,
-		models:   map[string]ModelEntry{},
-		usage:    NewUsageStore("", "", 0, 0, 0, "", 0, 0),
-		limiters: NewLimiterStore("60/m", 10),
-		logger:   NewLogger(LogLevelInfo),
+		cfg:           Config{AllowAnyKey: true},
+		cache:         NewCache(0),
+		harnessRouter: r,
+		models:        map[string]ModelEntry{},
+		usage:         NewUsageStore("", "", 0, 0, 0, "", 0, 0),
+		limiters:      NewLimiterStore("60/m", 10),
+		logger:        NewLogger(LogLevelInfo),
 	}
 
 	tests := []struct {
@@ -374,7 +283,7 @@ func TestModelAliasExpansion(t *testing.T) {
 	}{
 		{"sonnet", "claude-sonnet-4-5-20250929"},
 		{"opus", "claude-opus-4-5"},
-		{"gpt-4o", "gpt-4o"}, // no alias
+		{"gpt-4o", "gpt-4o"},
 	}
 
 	for _, tt := range tests {

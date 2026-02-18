@@ -1,5 +1,4 @@
-// Package anthropic implements the Anthropic Messages API backend.
-package anthropic
+package claude
 
 import (
 	"bytes"

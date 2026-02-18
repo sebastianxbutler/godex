@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -14,12 +13,9 @@ import (
 
 	"godex/pkg/admin"
 	"godex/pkg/auth"
-	"godex/pkg/backend"
-	"godex/pkg/backend/anthropic"
-	"godex/pkg/backend/codex"
-	"godex/pkg/backend/openapi"
 	"godex/pkg/client"
 	"godex/pkg/config"
+	"godex/pkg/harness"
 	"godex/pkg/metrics"
 	"godex/pkg/payments"
 	"godex/pkg/protocol"
@@ -121,13 +117,7 @@ type Server struct {
 	usage      *UsageStore
 	payments   payments.Gateway
 	models     map[string]ModelEntry
-	router     *backend.Router
 	harnessRouter *router.Router
-
-	// Model discovery cache
-	cachedModels      []backend.ModelInfo
-	cachedModelsTime  time.Time
-	modelsCacheTTL    time.Duration
 }
 
 func Run(cfg Config) error {
@@ -216,73 +206,6 @@ func Run(cfg Config) error {
 		models[cfg.Model] = ModelEntry{ID: cfg.Model, BaseURL: cfg.BaseURL}
 	}
 
-	// Initialize backend router
-	routerCfg := backend.RouterConfig{
-		Default:  cfg.Backends.Routing.Default,
-		Patterns: cfg.Backends.Routing.Patterns,
-		Aliases:  cfg.Backends.Routing.Aliases,
-	}
-	if routerCfg.Default == "" {
-		routerCfg.Default = "codex"
-	}
-	if routerCfg.Patterns == nil {
-		routerCfg.Patterns = backend.DefaultRouterConfig().Patterns
-	}
-	if routerCfg.Aliases == nil {
-		routerCfg.Aliases = backend.DefaultRouterConfig().Aliases
-	}
-	router := backend.NewRouter(routerCfg)
-
-	// Register Codex backend
-	if cfg.Backends.Codex.Enabled {
-		baseURL := cfg.Backends.Codex.BaseURL
-		if baseURL == "" {
-			baseURL = cfg.BaseURL
-		}
-		codexClient := codex.New(http.DefaultClient, store, codex.Config{
-			BaseURL:      baseURL,
-			Originator:   cfg.Originator,
-			UserAgent:    cfg.UserAgent,
-			AllowRefresh: cfg.AllowRefresh,
-		})
-		router.Register("codex", codexClient)
-	}
-
-	// Register Anthropic backend
-	if cfg.Backends.Anthropic.Enabled {
-		anthropicClient, err := anthropic.New(anthropic.Config{
-			CredentialsPath:  cfg.Backends.Anthropic.CredentialsPath,
-			DefaultMaxTokens: cfg.Backends.Anthropic.DefaultMaxTokens,
-		})
-		if err != nil {
-			return fmt.Errorf("init anthropic backend: %w", err)
-		}
-		router.Register("anthropic", anthropicClient)
-	}
-
-	// Register custom OpenAI-compatible backends
-	for name, bcfg := range cfg.Backends.Custom {
-		if !bcfg.IsEnabled() {
-			continue
-		}
-		if bcfg.Type != "openai" {
-			return fmt.Errorf("unknown backend type for %s: %s", name, bcfg.Type)
-		}
-		customClient, err := openapi.New(openapi.Config{
-			Name:      name,
-			BaseURL:   bcfg.BaseURL,
-			Auth:      bcfg.Auth,
-			Timeout:   bcfg.Timeout,
-			Discovery: bcfg.HasDiscovery(),
-			Models:    bcfg.Models,
-		})
-		if err != nil {
-			log.Printf("[WARN] skipping custom backend %s: %v", name, err)
-			continue
-		}
-		router.Register(name, customClient)
-	}
-
 	// Initialize metrics collector
 	metricsCollector, err := metrics.NewCollector(metrics.Config{
 		Enabled:     cfg.Metrics.Enabled,
@@ -304,11 +227,9 @@ func Run(cfg Config) error {
 		limiters:       limiters,
 		usage:          usage,
 		payments:       payGateway,
-		models:         models,
-		router:         router,
-		harnessRouter:  cfg.HarnessRouter,
-		metrics:        metricsCollector,
-		modelsCacheTTL: 5 * time.Minute, // Cache model list for 5 minutes
+		models:        models,
+		harnessRouter: cfg.HarnessRouter,
+		metrics:       metricsCollector,
 	}
 
 	mux := http.NewServeMux()
@@ -378,17 +299,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	if len(data) == 0 && s.router != nil {
-		models := s.getCachedModels(r.Context())
-		for _, m := range models {
-			data = append(data, OpenAIModel{
-				ID:      m.ID,
-				Object:  "model",
-				OwnedBy: "godex",
-			})
-		}
-	}
-
 	// Fall back to configured models
 	if len(data) == 0 {
 		for _, m := range s.models {
@@ -417,20 +327,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	s.logRequest(r, http.StatusOK, start)
 }
 
-// getCachedModels returns models from all backends, caching the result.
-func (s *Server) getCachedModels(ctx context.Context) []backend.ModelInfo {
-	if time.Since(s.cachedModelsTime) < s.modelsCacheTTL && len(s.cachedModels) > 0 {
-		return s.cachedModels
-	}
-
-	models := s.router.AllModels(ctx)
-	if len(models) > 0 {
-		s.cachedModels = models
-		s.cachedModelsTime = time.Now()
-	}
-	return models
-}
-
 // handleModelByID handles GET /v1/models/{model_id}
 func (s *Server) handleModelByID(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -452,44 +348,18 @@ func (s *Server) handleModelByID(w http.ResponseWriter, r *http.Request) {
 
 	// Expand alias
 	expandedID := modelID
-	if s.router != nil {
-		expandedID = s.router.ExpandAlias(modelID)
+	if s.harnessRouter != nil {
+		expandedID = s.harnessRouter.ExpandAlias(modelID)
 	}
 
-	// Check if model exists in cached models
-	models := s.getCachedModels(r.Context())
-	for _, m := range models {
-		if m.ID == expandedID || m.ID == modelID {
-			resp := OpenAIModelDetail{
-				ID:          m.ID,
-				Object:      "model",
-				OwnedBy:     "godex",
-				DisplayName: m.DisplayName,
-			}
-			// Include backend info if router available
-			if s.router != nil {
-				if be := s.router.BackendFor(m.ID); be != nil {
-					resp.Backend = be.Name()
-				}
-			}
-			// Note if this was an alias
-			if modelID != expandedID {
-				resp.Alias = modelID
-			}
-			writeJSON(w, http.StatusOK, resp)
-			s.logRequest(r, http.StatusOK, start)
-			return
-		}
-	}
-
-	// Check if router can handle this model (even if not in cached list)
-	if s.router != nil {
-		if be := s.router.BackendFor(expandedID); be != nil {
+	// Check if harness router can handle this model
+	if s.harnessRouter != nil {
+		if h := s.harnessRouter.HarnessFor(expandedID); h != nil {
 			resp := OpenAIModelDetail{
 				ID:      expandedID,
 				Object:  "model",
 				OwnedBy: "godex",
-				Backend: be.Name(),
+				Backend: h.Name(),
 			}
 			if modelID != expandedID {
 				resp.Alias = modelID
@@ -519,11 +389,9 @@ func (s *Server) resolveModel(model string) (ModelEntry, bool) {
 	if model == "" {
 		model = s.cfg.Model
 	}
-	// Expand alias if configured (try harness router first, then backend router)
+	// Expand alias
 	if s.harnessRouter != nil {
 		model = s.harnessRouter.ExpandAlias(model)
-	} else if s.router != nil {
-		model = s.router.ExpandAlias(model)
 	}
 	if m, ok := s.models[model]; ok {
 		return m, true
@@ -532,26 +400,11 @@ func (s *Server) resolveModel(model string) (ModelEntry, bool) {
 	if s.harnessRouter != nil && s.harnessRouter.HarnessFor(model) != nil {
 		return ModelEntry{ID: model, BaseURL: ""}, true
 	}
-	// If backend router has a backend for this model, allow it
-	if s.router != nil && s.router.BackendFor(model) != nil {
-		return ModelEntry{ID: model, BaseURL: ""}, true
-	}
 	// fallback to default if no models configured
 	if len(s.models) == 0 {
 		return ModelEntry{ID: model, BaseURL: s.cfg.BaseURL}, true
 	}
 	return ModelEntry{}, false
-}
-
-// backendForModel returns the appropriate backend for the given model.
-// Falls back to the legacy client-based approach if router is not configured.
-func (s *Server) backendForModel(model string) backend.Backend {
-	if s.router == nil {
-		return nil
-	}
-	// Expand alias first
-	model = s.router.ExpandAlias(model)
-	return s.router.BackendFor(model)
 }
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
@@ -811,7 +664,7 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (*KeyRecord
 func requestContext(r *http.Request) context.Context {
 	ctx := r.Context()
 	if key := strings.TrimSpace(r.Header.Get("X-Provider-Key")); key != "" {
-		ctx = backend.WithProviderKey(ctx, key)
+		ctx = harness.WithProviderKey(ctx, key)
 	}
 	return ctx
 }

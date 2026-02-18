@@ -8,14 +8,12 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	backendAnth "godex/pkg/backend/anthropic"
 	"godex/pkg/harness"
 )
 
-// ClientWrapper wraps the existing Anthropic backend client, providing
-// direct access to the Anthropic SDK for harness use.
+// ClientWrapper wraps the Anthropic SDK, providing direct access for harness use.
 type ClientWrapper struct {
-	tokens *backendAnth.TokenStore
+	tokens *TokenStore
 	cfg    ClientConfig
 }
 
@@ -28,8 +26,8 @@ type ClientConfig struct {
 	DefaultThinkingBudget int
 }
 
-// NewClientWrapper creates a wrapper around the existing Anthropic token store.
-func NewClientWrapper(tokens *backendAnth.TokenStore, cfg ClientConfig) *ClientWrapper {
+// NewClientWrapper creates a wrapper around the Anthropic token store.
+func NewClientWrapper(tokens *TokenStore, cfg ClientConfig) *ClientWrapper {
 	if cfg.DefaultMaxTokens <= 0 {
 		cfg.DefaultMaxTokens = 16384
 	}

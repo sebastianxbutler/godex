@@ -34,13 +34,13 @@
 
 **Dynamic Model Discovery** — Querying backends at runtime for available models (cached 5 min).
 
-**OpenAPI Backend** — The generic OpenAI-compatible backend in `pkg/backend/openapi/`. Used for Gemini, Groq, vLLM, Ollama, and any user-defined custom backend that speaks the OpenAI wire format. Formerly named `openai/` (renamed to reflect it targets the protocol, not the service).
+**OpenAPI Backend** — The generic OpenAI-compatible backend in `pkg/harness/openai/`. Used for Gemini, Groq, vLLM, Ollama, and any user-defined custom backend that speaks the OpenAI wire format. Formerly named `openai/` (renamed to reflect it targets the protocol, not the service).
 
 **Custom Backend** — A user-defined backend entry under `proxy.backends.custom` in the config. Backed by the OpenAPI backend implementation. Custom backends that fail to initialize (e.g., missing API key env var) are skipped with a warning rather than crashing the proxy.
 
 **Gemini** — Google's Gemini family of models, accessed via the OpenAPI backend at `https://generativelanguage.googleapis.com/v1beta/openai`. Requires a `GEMINI_API_KEY`. Aliases: `gemini` → `gemini-2.5-pro`, `flash` → `gemini-2.5-flash`.
 
-**Generic Tool Loop** — `backend.RunToolLoop()` in `pkg/backend/toolloop.go`. A backend-agnostic tool execution loop that works with any `Backend` interface implementation. Calls `StreamAndCollect`, dispatches tool calls via a `ToolHandler`, and sends follow-up requests until the model produces a final response or `MaxSteps` is reached.
+**Generic Tool Loop** — `backend.RunToolLoop()` in `pkg/harness/toolloop.go`. A backend-agnostic tool execution loop that works with any `Backend` interface implementation. Calls `StreamAndCollect`, dispatches tool calls via a `ToolHandler`, and sends follow-up requests until the model produces a final response or `MaxSteps` is reached.
 
 **Provider Key (X-Provider-Key)** — A per-request API key override for non-OAuth backends. Supplied as the `X-Provider-Key` HTTP header on proxy requests, or via the `--provider-key` CLI flag for `godex exec`. Injected into the request context via `backend.WithProviderKey()` and extracted by the OpenAPI backend client. Takes precedence over the `key_env` configured value.
 
