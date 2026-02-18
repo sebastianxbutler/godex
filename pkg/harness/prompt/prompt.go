@@ -114,7 +114,7 @@ func (b *Builder) Build() (string, error) {
 
 	// 5. Environment context
 	if b.Environment != nil {
-		envXML := b.buildEnvironmentContext()
+		envXML := b.BuildEnvironmentContext()
 		parts = append(parts, envXML)
 	}
 
@@ -131,8 +131,9 @@ func (b *Builder) Build() (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// buildEnvironmentContext generates the XML environment context block.
-func (b *Builder) buildEnvironmentContext() string {
+// BuildEnvironmentContext generates the XML environment context block.
+// It is exported so provider-specific harnesses can use it directly.
+func (b *Builder) BuildEnvironmentContext() string {
 	env := b.Environment
 	var lines []string
 	lines = append(lines, "<environment_context>")
