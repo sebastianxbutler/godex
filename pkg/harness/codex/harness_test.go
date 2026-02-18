@@ -233,6 +233,9 @@ func TestBuildRequest_MessageTypes(t *testing.T) {
 	if req.Input[3].Type != "message" || req.Input[3].Role != "assistant" {
 		t.Error("expected assistant message")
 	}
+	if len(req.Input[3].Content) != 1 || req.Input[3].Content[0].Type != "output_text" {
+		t.Error("expected assistant history content type output_text")
+	}
 }
 
 func TestDefaultTools(t *testing.T) {

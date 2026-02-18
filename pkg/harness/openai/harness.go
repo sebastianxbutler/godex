@@ -152,7 +152,8 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 					Type: "message",
 					Role: "assistant",
 					Content: []protocol.InputContentPart{{
-						Type: "input_text",
+						// Responses API requires assistant history content to be output_text/refusal.
+						Type: "output_text",
 						Text: msg.Content,
 					}},
 				})

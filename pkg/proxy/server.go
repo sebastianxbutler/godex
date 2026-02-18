@@ -105,18 +105,18 @@ type RoutingConfig struct {
 }
 
 type Server struct {
-	cfg        Config
-	cache      *Cache
-	httpClient *http.Client
-	authStore  *auth.Store
-	logger     *Logger
-	audit      *AuditLogger
-	keys       *KeyStore
-	limiters   *LimiterStore
-	metrics    *metrics.Collector
-	usage      *UsageStore
-	payments   payments.Gateway
-	models     map[string]ModelEntry
+	cfg           Config
+	cache         *Cache
+	httpClient    *http.Client
+	authStore     *auth.Store
+	logger        *Logger
+	audit         *AuditLogger
+	keys          *KeyStore
+	limiters      *LimiterStore
+	metrics       *metrics.Collector
+	usage         *UsageStore
+	payments      payments.Gateway
+	models        map[string]ModelEntry
 	harnessRouter *router.Router
 }
 
@@ -217,16 +217,16 @@ func Run(cfg Config) error {
 	}
 
 	s := &Server{
-		cfg:            cfg,
-		cache:          NewCache(cfg.CacheTTL),
-		httpClient:     http.DefaultClient,
-		authStore:      store,
-		logger:         NewLogger(ParseLogLevel(cfg.LogLevel)),
-		audit:          NewAuditLogger(cfg.AuditPath, cfg.AuditMaxBytes, cfg.AuditBackups),
-		keys:           keys,
-		limiters:       limiters,
-		usage:          usage,
-		payments:       payGateway,
+		cfg:           cfg,
+		cache:         NewCache(cfg.CacheTTL),
+		httpClient:    http.DefaultClient,
+		authStore:     store,
+		logger:        NewLogger(ParseLogLevel(cfg.LogLevel)),
+		audit:         NewAuditLogger(cfg.AuditPath, cfg.AuditMaxBytes, cfg.AuditBackups),
+		keys:          keys,
+		limiters:      limiters,
+		usage:         usage,
+		payments:      payGateway,
 		models:        models,
 		harnessRouter: cfg.HarnessRouter,
 		metrics:       metricsCollector,
@@ -255,7 +255,6 @@ func Run(cfg Config) error {
 			_ = adminSrv.Start(ctx)
 		}()
 	}
-
 
 	return server.ListenAndServe()
 }
@@ -494,7 +493,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.harnessResponsesStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, auditReqJSON, sessionKey); err != nil {
-			writeError(w, http.StatusBadGateway, err)
+			_ = writeSSE(w, flusher, map[string]any{
+				"type":    "error",
+				"message": err.Error(),
+			})
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			flusher.Flush()
 			s.logRequest(r, http.StatusBadGateway, start)
 			return
 		}
@@ -580,7 +584,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
+		_ = writeSSE(w, flusher, map[string]any{
+			"type":    "error",
+			"message": err.Error(),
+		})
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
 		s.logRequest(r, http.StatusBadGateway, start)
 		return
 	}
@@ -829,12 +838,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stats := s.metrics.Stats()
-	
+
 	// Build response with backend stats
 	response := map[string]any{
 		"backends": stats,
 	}
-	
+
 	writeJSON(w, http.StatusOK, response)
 	s.logRequest(r, http.StatusOK, start)
 }

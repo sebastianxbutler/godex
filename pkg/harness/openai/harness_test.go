@@ -334,6 +334,12 @@ func TestBuildRequest_MessageTypes(t *testing.T) {
 	if len(req.Input) != 4 {
 		t.Fatalf("expected 4 inputs, got %d", len(req.Input))
 	}
+	if req.Input[3].Type != "message" || req.Input[3].Role != "assistant" {
+		t.Fatalf("expected assistant message at input[3], got %#v", req.Input[3])
+	}
+	if len(req.Input[3].Content) != 1 || req.Input[3].Content[0].Type != "output_text" {
+		t.Fatalf("expected assistant history content type output_text, got %#v", req.Input[3].Content)
+	}
 }
 
 func TestListModels(t *testing.T) {

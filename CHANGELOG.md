@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.5 - 2026-02-18
+### Fixed
+- **OpenClaw assistant-history stalls via godex proxy**: Harness request builders now encode prior assistant text messages as `output_text` (not `input_text`) for Responses API compatibility, preventing upstream 400 errors and empty assistant turns.
+- **Streaming error framing for OpenAI-compatible clients**: `/v1/responses` and `/v1/chat/completions` now emit SSE `error` events plus `[DONE]` on stream failures instead of writing JSON error bodies into an active SSE stream.
+
+### Added
+- Regression test assertions in Codex/OpenAI harness tests verifying assistant history content uses `output_text`.
+
 ## 0.8.4 - 2026-02-18
 ### Added
 - **Dynamic system prompt** with marker-based section replacement. The Codex base prompt uses HTML comment markers (`<!-- SECTION_START -->` / `<!-- SECTION_END -->`) to identify tool-specific sections. In proxy mode (default), these sections are replaced with caller's tool context. Future Codex prompt updates just need markers preserved.

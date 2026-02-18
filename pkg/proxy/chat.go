@@ -124,7 +124,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.harnessChatStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, sessionKey); err != nil {
-			writeError(w, http.StatusBadGateway, err)
+			_ = writeSSE(w, flusher, map[string]any{
+				"type":    "error",
+				"message": err.Error(),
+			})
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			flusher.Flush()
 			return
 		}
 		return
@@ -279,7 +284,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		s.recordMetric(backendName, req.Model, start, "error", err.Error(), nil)
-		writeError(w, http.StatusBadGateway, err)
+		_ = writeSSE(w, flusher, map[string]any{
+			"type":    "error",
+			"message": err.Error(),
+		})
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
 		return
 	}
 
