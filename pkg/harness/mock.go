@@ -189,6 +189,12 @@ func (m *Mock) ListModels(_ context.Context) ([]ModelInfo, error) {
 	return m.cfg.Models, nil
 }
 
+// ExpandAlias returns the alias unchanged (mock has no aliases).
+func (m *Mock) ExpandAlias(alias string) string { return alias }
+
+// MatchesModel returns false (mock does not match any model by default).
+func (m *Mock) MatchesModel(model string) bool { return false }
+
 // Recorded returns all Turn requests received when Record is true.
 func (m *Mock) Recorded() []*Turn {
 	m.mu.Lock()

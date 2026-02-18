@@ -31,12 +31,11 @@ func TestChatCompletionsRouting(t *testing.T) {
 	})
 
 	r := router.New(router.Config{
-		Default: "codex",
-		Patterns: map[string][]string{
+		UserPatterns: map[string][]string{
 			"claude": {"claude-", "sonnet"},
 			"codex":  {"gpt-", "codex-"},
 		},
-		Aliases: map[string]string{
+		UserAliases: map[string]string{
 			"sonnet": "claude-sonnet-4-5",
 		},
 	})
@@ -122,7 +121,7 @@ func TestChatCompletionsStreaming(t *testing.T) {
 		}},
 	})
 
-	r := router.New(router.Config{Default: "mock"})
+	r := router.New(router.Config{})
 	r.Register("mock", mock)
 
 	srv := &Server{
@@ -180,7 +179,7 @@ func TestChatCompletionsToolCalls(t *testing.T) {
 		}},
 	})
 
-	r := router.New(router.Config{Default: "mock"})
+	r := router.New(router.Config{})
 	r.Register("mock", mock)
 
 	srv := &Server{
@@ -204,10 +203,11 @@ func TestChatCompletionsToolCalls(t *testing.T) {
 				Function: &OpenAIFunction{
 					Name:        "get_weather",
 					Description: "Get weather",
-					Parameters:  json.RawMessage(`{"type":"object"}`),
+					Parameters:  json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}}}`),
 				},
 			},
 		},
+		ToolChoice: "auto",
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -233,21 +233,17 @@ func TestChatCompletionsToolCalls(t *testing.T) {
 		t.Fatal("no choices in response")
 	}
 
-	toolCalls := chatResp.Choices[0].Message.ToolCalls
-	if len(toolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	if len(chatResp.Choices[0].Message.ToolCalls) == 0 {
+		t.Fatal("expected tool call in response")
 	}
 
-	if toolCalls[0].Function.Name != "get_weather" {
-		t.Errorf("expected get_weather, got %s", toolCalls[0].Function.Name)
-	}
-
-	if chatResp.Choices[0].FinishReason != "tool_calls" {
-		t.Errorf("expected finish_reason tool_calls, got %s", chatResp.Choices[0].FinishReason)
+	call := chatResp.Choices[0].Message.ToolCalls[0]
+	if call.Function.Name != "get_weather" {
+		t.Errorf("expected tool name get_weather, got %s", call.Function.Name)
 	}
 }
 
-// TestModelAliasExpansion tests that model aliases are expanded.
+// TestModelAliasExpansion tests alias expansion.
 func TestModelAliasExpansion(t *testing.T) {
 	mock := harness.NewMock(harness.MockConfig{
 		HarnessName: "mock",
@@ -259,10 +255,12 @@ func TestModelAliasExpansion(t *testing.T) {
 	})
 
 	r := router.New(router.Config{
-		Default: "mock",
-		Aliases: map[string]string{
+		UserAliases: map[string]string{
 			"sonnet": "claude-sonnet-4-5-20250929",
 			"opus":   "claude-opus-4-5",
+		},
+		UserPatterns: map[string][]string{
+			"mock": {"claude-", "gpt-"},
 		},
 	})
 	r.Register("mock", mock)

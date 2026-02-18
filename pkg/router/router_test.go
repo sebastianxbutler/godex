@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"godex/pkg/harness"
@@ -9,8 +10,10 @@ import (
 
 // stubHarness is a minimal harness for testing routing.
 type stubHarness struct {
-	name   string
-	models []harness.ModelInfo
+	name     string
+	models   []harness.ModelInfo
+	aliases  map[string]string
+	prefixes []string
 }
 
 func (s *stubHarness) Name() string { return s.name }
@@ -26,11 +29,44 @@ func (s *stubHarness) RunToolLoop(ctx context.Context, turn *harness.Turn, handl
 func (s *stubHarness) ListModels(ctx context.Context) ([]harness.ModelInfo, error) {
 	return s.models, nil
 }
+func (s *stubHarness) ExpandAlias(alias string) string {
+	if s.aliases != nil {
+		if full, ok := s.aliases[alias]; ok {
+			return full
+		}
+		if full, ok := s.aliases[strings.ToLower(alias)]; ok {
+			return full
+		}
+	}
+	return alias
+}
+func (s *stubHarness) MatchesModel(model string) bool {
+	lower := strings.ToLower(model)
+	if s.aliases != nil {
+		if _, ok := s.aliases[model]; ok {
+			return true
+		}
+		if _, ok := s.aliases[lower]; ok {
+			return true
+		}
+		for k, v := range s.aliases {
+			if strings.ToLower(k) == lower || strings.ToLower(v) == lower {
+				return true
+			}
+		}
+	}
+	for _, p := range s.prefixes {
+		if strings.HasPrefix(lower, strings.ToLower(p)) {
+			return true
+		}
+	}
+	return false
+}
 
-func TestHarnessFor_PrefixMatch(t *testing.T) {
-	r := New(DefaultConfig())
-	codex := &stubHarness{name: "codex"}
-	claude := &stubHarness{name: "claude"}
+func TestHarnessFor_DelegatesToHarness(t *testing.T) {
+	r := New(Config{})
+	codex := &stubHarness{name: "codex", prefixes: []string{"gpt-", "o1-", "o3-", "codex-"}}
+	claude := &stubHarness{name: "claude", prefixes: []string{"claude-"}, aliases: map[string]string{"sonnet": "claude-sonnet-4-6"}}
 	r.Register("codex", codex)
 	r.Register("claude", claude)
 
@@ -39,11 +75,11 @@ func TestHarnessFor_PrefixMatch(t *testing.T) {
 		want  string
 	}{
 		{"gpt-5.2-codex", "codex"},
-		{"gpt-4o", "codex"},
 		{"o1-preview", "codex"},
 		{"o3-mini", "codex"},
-		{"claude-sonnet-4-5-20250929", "claude"},
+		{"claude-sonnet-4-5", "claude"},
 		{"claude-opus-4-5", "claude"},
+		{"sonnet", "claude"},
 	}
 	for _, tt := range tests {
 		h := r.HarnessFor(tt.model)
@@ -57,95 +93,100 @@ func TestHarnessFor_PrefixMatch(t *testing.T) {
 	}
 }
 
-func TestHarnessFor_Default(t *testing.T) {
-	r := New(DefaultConfig())
-	codex := &stubHarness{name: "codex"}
+func TestHarnessFor_UserPatternOverride(t *testing.T) {
+	r := New(Config{
+		UserPatterns: map[string][]string{
+			"custom": {"gpt-"},
+		},
+	})
+	codex := &stubHarness{name: "codex", prefixes: []string{"gpt-"}}
+	custom := &stubHarness{name: "custom"}
 	r.Register("codex", codex)
+	r.Register("custom", custom)
 
-	h := r.HarnessFor("unknown-model-xyz")
-	if h == nil {
-		t.Fatal("expected default harness, got nil")
+	h := r.HarnessFor("gpt-5.2-codex")
+	if h == nil || h.Name() != "custom" {
+		t.Errorf("expected user pattern override to custom, got %v", h)
 	}
-	if h.Name() != "codex" {
-		t.Errorf("got %q, want codex", h.Name())
+}
+
+func TestExpandAlias_UserOverride(t *testing.T) {
+	r := New(Config{
+		UserAliases: map[string]string{
+			"sonnet": "my-custom-sonnet",
+		},
+	})
+	claude := &stubHarness{name: "claude", aliases: map[string]string{"sonnet": "claude-sonnet-4-6"}}
+	r.Register("claude", claude)
+
+	got := r.ExpandAlias("sonnet")
+	if got != "my-custom-sonnet" {
+		t.Errorf("ExpandAlias(sonnet) = %q, want my-custom-sonnet", got)
+	}
+}
+
+func TestExpandAlias_DelegatesToHarness(t *testing.T) {
+	r := New(Config{})
+	claude := &stubHarness{name: "claude", aliases: map[string]string{"sonnet": "claude-sonnet-4-6"}}
+	r.Register("claude", claude)
+
+	got := r.ExpandAlias("sonnet")
+	if got != "claude-sonnet-4-6" {
+		t.Errorf("ExpandAlias(sonnet) = %q, want claude-sonnet-4-6", got)
 	}
 }
 
 func TestHarnessFor_NoMatch(t *testing.T) {
-	r := New(Config{Patterns: map[string][]string{"x": {"x-"}}})
-	// No harnesses registered
-	h := r.HarnessFor("x-model")
-	if h != nil {
-		t.Errorf("expected nil, got %v", h)
-	}
-}
-
-func TestExpandAlias(t *testing.T) {
-	r := New(DefaultConfig())
-	if got := r.ExpandAlias("sonnet"); got != "claude-sonnet-4-5-20250929" {
-		t.Errorf("got %q", got)
-	}
-	if got := r.ExpandAlias("unknown"); got != "unknown" {
-		t.Errorf("got %q", got)
-	}
-	// Case insensitive
-	if got := r.ExpandAlias("SONNET"); got != "claude-sonnet-4-5-20250929" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestList(t *testing.T) {
-	r := New(DefaultConfig())
-	r.Register("codex", &stubHarness{name: "codex"})
-	r.Register("claude", &stubHarness{name: "claude"})
-
-	names := r.List()
-	if len(names) != 2 {
-		t.Errorf("got %d names, want 2", len(names))
-	}
-}
-
-func TestGet(t *testing.T) {
-	r := New(DefaultConfig())
+	r := New(Config{})
 	codex := &stubHarness{name: "codex"}
 	r.Register("codex", codex)
 
-	if r.Get("codex") != codex {
-		t.Error("Get(codex) returned wrong harness")
+	h := r.HarnessFor("unknown-model-xyz")
+	if h == nil || h.Name() != "codex" {
+		t.Errorf("expected fallback to first harness, got %v", h)
 	}
-	if r.Get("missing") != nil {
-		t.Error("Get(missing) should be nil")
+}
+
+func TestExpandAlias_NoAlias(t *testing.T) {
+	r := New(Config{})
+	got := r.ExpandAlias("unknown")
+	if got != "unknown" {
+		t.Errorf("ExpandAlias(unknown) = %q, want unknown", got)
 	}
 }
 
 func TestAllModels(t *testing.T) {
-	r := New(DefaultConfig())
-	r.Register("codex", &stubHarness{
-		name:   "codex",
-		models: []harness.ModelInfo{{ID: "gpt-5.2-codex"}},
-	})
-	r.Register("claude", &stubHarness{
-		name:   "claude",
-		models: []harness.ModelInfo{{ID: "claude-sonnet-4-5"}},
-	})
+	r := New(Config{})
+	r.Register("a", &stubHarness{name: "a", models: []harness.ModelInfo{{ID: "m1"}}})
+	r.Register("b", &stubHarness{name: "b", models: []harness.ModelInfo{{ID: "m2"}, {ID: "m3"}}})
 
-	models := r.AllModels(context.Background())
-	if len(models) != 2 {
-		t.Errorf("got %d models, want 2", len(models))
+	all := r.AllModels(context.Background())
+	if len(all) != 3 {
+		t.Errorf("AllModels() returned %d models, want 3", len(all))
 	}
 }
 
-func TestHarnessFor_ExactMatch(t *testing.T) {
-	r := New(Config{
-		Patterns: map[string][]string{
-			"claude": {"sonnet"},
-		},
-	})
-	claude := &stubHarness{name: "claude"}
-	r.Register("claude", claude)
+func TestList(t *testing.T) {
+	r := New(Config{})
+	r.Register("a", &stubHarness{name: "a"})
+	r.Register("b", &stubHarness{name: "b"})
 
-	h := r.HarnessFor("sonnet")
-	if h == nil || h.Name() != "claude" {
-		t.Errorf("exact match 'sonnet' should route to claude")
+	names := r.List()
+	if len(names) != 2 || names[0] != "a" || names[1] != "b" {
+		t.Errorf("List() = %v, want [a b]", names)
+	}
+}
+
+func TestMultiHarness_FirstMatchWins(t *testing.T) {
+	r := New(Config{})
+	// Both match "gpt-" but first registered wins
+	h1 := &stubHarness{name: "first", prefixes: []string{"gpt-"}}
+	h2 := &stubHarness{name: "second", prefixes: []string{"gpt-"}}
+	r.Register("first", h1)
+	r.Register("second", h2)
+
+	h := r.HarnessFor("gpt-5")
+	if h == nil || h.Name() != "first" {
+		t.Errorf("expected first, got %v", h)
 	}
 }

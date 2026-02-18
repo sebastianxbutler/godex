@@ -37,9 +37,12 @@ func TestStreamTurn_NoClient(t *testing.T) {
 
 func TestListModels_NoClient(t *testing.T) {
 	h := New(Config{})
-	_, err := h.ListModels(context.Background())
-	if err == nil {
-		t.Fatal("expected error with no client")
+	models, err := h.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 0 {
+		t.Fatalf("expected no models, got %d", len(models))
 	}
 }
 

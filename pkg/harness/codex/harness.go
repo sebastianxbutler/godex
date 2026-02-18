@@ -18,12 +18,20 @@ type Config struct {
 
 	// DefaultModel is the model to use when Turn.Model is empty.
 	DefaultModel string
+
+	// ExtraAliases are additional aliases merged with defaults.
+	ExtraAliases map[string]string
+
+	// ExtraPrefixes are additional match prefixes merged with defaults.
+	ExtraPrefixes []string
 }
 
 // Harness implements harness.Harness for the Codex/Responses API.
 type Harness struct {
-	client       *Client
-	defaultModel string
+	client        *Client
+	defaultModel  string
+	extraAliases  map[string]string
+	extraPrefixes []string
 }
 
 // Ensure Harness implements the interface.
@@ -36,8 +44,10 @@ func New(cfg Config) *Harness {
 		model = "gpt-5.2-codex"
 	}
 	return &Harness{
-		client:       cfg.Client,
-		defaultModel: model,
+		client:        cfg.Client,
+		defaultModel:  model,
+		extraAliases:  cfg.ExtraAliases,
+		extraPrefixes: cfg.ExtraPrefixes,
 	}
 }
 
@@ -98,7 +108,7 @@ func (h *Harness) RunToolLoop(ctx context.Context, turn *harness.Turn, handler h
 
 // ListModels returns available Codex models.
 func (h *Harness) ListModels(ctx context.Context) ([]harness.ModelInfo, error) {
-	return h.client.ListModels(ctx)
+	return h.listModelsWithDiscovery(ctx)
 }
 
 // buildRequest translates a harness.Turn into a protocol.ResponsesRequest.

@@ -55,6 +55,9 @@ func (l *loggerHarness) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	return l.inner.ListModels(ctx)
 }
 
+func (l *loggerHarness) ExpandAlias(alias string) string { return l.inner.ExpandAlias(alias) }
+func (l *loggerHarness) MatchesModel(model string) bool  { return l.inner.MatchesModel(model) }
+
 func (l *loggerHarness) StreamTurn(ctx context.Context, turn *Turn, onEvent func(Event) error) error {
 	seq := l.turnSeq.Add(1)
 	w, err := l.openLog(seq)

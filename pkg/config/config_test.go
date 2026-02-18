@@ -206,19 +206,14 @@ func TestApplyEnvInvalidDuration(t *testing.T) {
 func TestRoutingConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	// Check default routing patterns
 	patterns := cfg.Proxy.Backends.Routing.Patterns
-	if len(patterns["anthropic"]) == 0 {
-		t.Error("expected anthropic patterns")
-	}
-	if len(patterns["codex"]) == 0 {
-		t.Error("expected codex patterns")
+	if len(patterns) != 0 {
+		t.Errorf("expected no default patterns, got %v", patterns)
 	}
 
-	// Check aliases
 	aliases := cfg.Proxy.Backends.Routing.Aliases
-	if aliases["sonnet"] != "claude-sonnet-4-5-20250929" {
-		t.Errorf("sonnet alias = %q, want claude-sonnet-4-5-20250929", aliases["sonnet"])
+	if len(aliases) != 0 {
+		t.Errorf("expected no default aliases, got %v", aliases)
 	}
 }
 

@@ -30,6 +30,13 @@ type Harness interface {
 
 	// ListModels returns available models for this harness.
 	ListModels(ctx context.Context) ([]ModelInfo, error)
+
+	// ExpandAlias expands a model alias to its full name.
+	// Returns the input unchanged if no alias matches.
+	ExpandAlias(alias string) string
+
+	// MatchesModel returns true if this harness handles the given model.
+	MatchesModel(model string) bool
 }
 
 // Message represents a single message in the conversation history.

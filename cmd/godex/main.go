@@ -679,22 +679,9 @@ func runProxy(args []string) error {
 
 // buildHarnessRouter creates a harness router with all configured providers.
 func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router {
-	// Build routing config from proxy config
 	routingCfg := router.Config{
-		Default:  proxyCfg.Backends.Routing.Default,
-		Patterns: proxyCfg.Backends.Routing.Patterns,
-		Aliases:  proxyCfg.Backends.Routing.Aliases,
-	}
-	if routingCfg.Default == "" {
-		routingCfg.Default = "codex"
-	}
-	if routingCfg.Patterns == nil {
-		defaults := router.DefaultConfig()
-		routingCfg.Patterns = defaults.Patterns
-	}
-	if routingCfg.Aliases == nil {
-		defaults := router.DefaultConfig()
-		routingCfg.Aliases = defaults.Aliases
+		UserAliases:  proxyCfg.Backends.Routing.Aliases,
+		UserPatterns: proxyCfg.Backends.Routing.Patterns,
 	}
 
 	r := router.New(routingCfg)
@@ -719,7 +706,9 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 				AllowRefresh: proxyCfg.AllowRefresh,
 			})
 			h := harnessCodexP.New(harnessCodexP.Config{
-				Client: codexClient,
+				Client:        codexClient,
+				ExtraAliases:  cfg.Proxy.Backends.Routing.Aliases,
+				ExtraPrefixes: cfg.Proxy.Backends.Routing.Patterns["codex"],
 			})
 			r.Register("codex", h)
 			registered++
@@ -736,6 +725,7 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 			h := harnessClaudeP.New(harnessClaudeP.Config{
 				Client:           wrapper,
 				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+				ExtraAliases:     cfg.Proxy.Backends.Routing.Aliases,
 			})
 			r.Register("anthropic", h)
 			registered++
@@ -759,7 +749,9 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 			continue
 		}
 		h := harnessOpenaiP.New(harnessOpenaiP.Config{
-			Client: oaiClient,
+			Client:   oaiClient,
+			Aliases:  cfg.Proxy.Backends.Routing.Aliases,
+			Prefixes: cfg.Proxy.Backends.Routing.Patterns[name],
 		})
 		r.Register(name, h)
 		registered++

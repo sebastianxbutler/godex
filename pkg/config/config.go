@@ -243,15 +243,8 @@ func DefaultConfig() Config {
 				},
 				Routing: RoutingConfig{
 					Default: "codex",
-					Patterns: map[string][]string{
-						"anthropic": {"claude-", "sonnet", "opus", "haiku"},
-						"codex":     {"gpt-", "o1-", "o3-", "codex-"},
-					},
-					Aliases: map[string]string{
-						"sonnet": "claude-sonnet-4-5-20250929",
-						"opus":   "claude-opus-4-5",
-						"haiku":  "claude-haiku-4-5",
-					},
+					Patterns: map[string][]string{},
+					Aliases:  map[string]string{},
 				},
 			},
 		},

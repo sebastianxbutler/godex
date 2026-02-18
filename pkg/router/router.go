@@ -1,5 +1,6 @@
-// Package router provides model-to-harness routing. It maps model names
-// (or aliases/prefixes) to the appropriate harness.Harness implementation.
+// Package router provides model-to-harness routing. It delegates model
+// matching and alias expansion to individual harnesses, with optional
+// user-level overrides.
 package router
 
 import (
@@ -10,32 +11,31 @@ import (
 	"godex/pkg/harness"
 )
 
-// Config configures model-to-harness routing.
+// Config configures user-level routing overrides.
 type Config struct {
-	// Patterns maps harness names to model prefixes/aliases.
-	// Example: {"claude": ["claude-", "sonnet", "opus"], "codex": ["gpt-", "o1-"]}
-	Patterns map[string][]string
+	// UserAliases are override aliases that take priority over harness defaults.
+	UserAliases map[string]string
 
-	// Aliases maps short names to full model names.
-	// Example: {"sonnet": "claude-sonnet-4-5-20250929"}
-	Aliases map[string]string
-
-	// Default is the fallback harness name when no pattern matches.
-	Default string
+	// UserPatterns are override patterns: map[harnessName][]prefix.
+	UserPatterns map[string][]string
 }
 
 // Router selects the appropriate harness based on model name.
 type Router struct {
-	harnesses map[string]harness.Harness
+	harnesses []registeredHarness // ordered
 	config    Config
 	mu        sync.RWMutex
+}
+
+type registeredHarness struct {
+	name    string
+	harness harness.Harness
 }
 
 // New creates a new router with the given configuration.
 func New(cfg Config) *Router {
 	return &Router{
-		harnesses: make(map[string]harness.Harness),
-		config:    cfg,
+		config: cfg,
 	}
 }
 
@@ -43,41 +43,62 @@ func New(cfg Config) *Router {
 func (r *Router) Register(name string, h harness.Harness) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.harnesses[name] = h
+	r.harnesses = append(r.harnesses, registeredHarness{name: name, harness: h})
 }
 
 // ExpandAlias expands a model alias to its full name.
-// Returns the original model if no alias exists.
+// Checks user aliases first, then asks each harness.
 func (r *Router) ExpandAlias(model string) string {
-	if full, ok := r.config.Aliases[strings.ToLower(model)]; ok {
-		return full
+	if r.config.UserAliases != nil {
+		if full, ok := r.config.UserAliases[strings.ToLower(model)]; ok {
+			return full
+		}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, rh := range r.harnesses {
+		expanded := rh.harness.ExpandAlias(model)
+		if expanded != model {
+			return expanded
+		}
 	}
 	return model
 }
 
 // HarnessFor returns the appropriate harness for the given model.
-// Returns nil if no matching harness is found.
+// Checks user patterns first, then asks each harness MatchesModel().
 func (r *Router) HarnessFor(model string) harness.Harness {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	lower := strings.ToLower(model)
 
-	for harnessName, patterns := range r.config.Patterns {
-		for _, pattern := range patterns {
-			pattern = strings.ToLower(pattern)
-			if lower == pattern || strings.HasPrefix(lower, pattern) {
-				if h, ok := r.harnesses[harnessName]; ok {
-					return h
+	// Check user pattern overrides first
+	if r.config.UserPatterns != nil {
+		for harnessName, patterns := range r.config.UserPatterns {
+			for _, pattern := range patterns {
+				pattern = strings.ToLower(pattern)
+				if lower == pattern || strings.HasPrefix(lower, pattern) {
+					for _, rh := range r.harnesses {
+						if rh.name == harnessName {
+							return rh.harness
+						}
+					}
 				}
 			}
 		}
 	}
 
-	if r.config.Default != "" {
-		if h, ok := r.harnesses[r.config.Default]; ok {
-			return h
+	// Ask each harness
+	for _, rh := range r.harnesses {
+		if rh.harness.MatchesModel(model) {
+			return rh.harness
 		}
+	}
+
+	// Fallback to first registered harness
+	if len(r.harnesses) > 0 {
+		return r.harnesses[0].harness
 	}
 
 	return nil
@@ -87,16 +108,21 @@ func (r *Router) HarnessFor(model string) harness.Harness {
 func (r *Router) Get(name string) harness.Harness {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.harnesses[name]
+	for _, rh := range r.harnesses {
+		if rh.name == name {
+			return rh.harness
+		}
+	}
+	return nil
 }
 
 // List returns all registered harness names.
 func (r *Router) List() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.harnesses))
-	for name := range r.harnesses {
-		names = append(names, name)
+	names := make([]string, len(r.harnesses))
+	for i, rh := range r.harnesses {
+		names[i] = rh.name
 	}
 	return names
 }
@@ -107,10 +133,10 @@ func (r *Router) ListAllModels(ctx context.Context) map[string][]harness.ModelIn
 	defer r.mu.RUnlock()
 
 	result := make(map[string][]harness.ModelInfo)
-	for name, h := range r.harnesses {
-		models, err := h.ListModels(ctx)
+	for _, rh := range r.harnesses {
+		models, err := rh.harness.ListModels(ctx)
 		if err == nil && len(models) > 0 {
-			result[name] = models
+			result[rh.name] = models
 		}
 	}
 	return result
@@ -124,20 +150,4 @@ func (r *Router) AllModels(ctx context.Context) []harness.ModelInfo {
 		all = append(all, models...)
 	}
 	return all
-}
-
-// DefaultConfig returns a default routing configuration.
-func DefaultConfig() Config {
-	return Config{
-		Patterns: map[string][]string{
-			"claude": {"claude-", "sonnet", "opus", "haiku"},
-			"codex":  {"gpt-", "o1-", "o3-", "codex-"},
-		},
-		Aliases: map[string]string{
-			"sonnet": "claude-sonnet-4-5-20250929",
-			"opus":   "claude-opus-4-5",
-			"haiku":  "claude-haiku-4-5",
-		},
-		Default: "codex",
-	}
 }

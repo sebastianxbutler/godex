@@ -18,6 +18,12 @@ type Config struct {
 
 	// DefaultModel is the model to use when Turn.Model is empty.
 	DefaultModel string
+
+	// Aliases maps short names to full model names.
+	Aliases map[string]string
+
+	// Prefixes are model name prefixes this harness matches.
+	Prefixes []string
 }
 
 // streamClient abstracts the streaming API for testing.
@@ -32,6 +38,8 @@ type streamClient interface {
 type Harness struct {
 	client       streamClient
 	defaultModel string
+	aliases      map[string]string
+	prefixes     []string
 }
 
 var _ harness.Harness = (*Harness)(nil)
@@ -49,6 +57,8 @@ func New(cfg Config) *Harness {
 	return &Harness{
 		client:       sc,
 		defaultModel: model,
+		aliases:      cfg.Aliases,
+		prefixes:     cfg.Prefixes,
 	}
 }
 
@@ -112,10 +122,7 @@ func (h *Harness) RunToolLoop(ctx context.Context, turn *harness.Turn, handler h
 
 // ListModels returns available models.
 func (h *Harness) ListModels(ctx context.Context) ([]harness.ModelInfo, error) {
-	if h.client == nil {
-		return nil, fmt.Errorf("openai: no client configured")
-	}
-	return h.client.ListModels(ctx)
+	return h.listModelsWithDiscovery(ctx)
 }
 
 // buildRequest translates a harness.Turn into a protocol.ResponsesRequest.

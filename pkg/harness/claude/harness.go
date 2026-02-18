@@ -25,6 +25,9 @@ type Config struct {
 	// ThinkingBudget is the budget_tokens for extended thinking.
 	// Set to 0 to disable extended thinking.
 	ThinkingBudget int
+
+	// ExtraAliases are additional aliases merged with defaults.
+	ExtraAliases map[string]string
 }
 
 // messageStreamer abstracts the streaming API for testing.
@@ -40,6 +43,7 @@ type Harness struct {
 	maxTokens    int
 	thinkBudget  int
 	testClient   messageStreamer // for testing only; nil in production
+	extraAliases map[string]string
 }
 
 var _ harness.Harness = (*Harness)(nil)
@@ -59,6 +63,7 @@ func New(cfg Config) *Harness {
 		defaultModel: model,
 		maxTokens:    maxTokens,
 		thinkBudget:  cfg.ThinkingBudget,
+		extraAliases: cfg.ExtraAliases,
 	}
 }
 
@@ -123,10 +128,7 @@ func (h *Harness) RunToolLoop(ctx context.Context, turn *harness.Turn, handler h
 
 // ListModels returns available Claude models.
 func (h *Harness) ListModels(ctx context.Context) ([]harness.ModelInfo, error) {
-	if h.testClient != nil {
-		return h.testClient.ListModels(ctx)
-	}
-	return h.client.ListModels(ctx)
+	return h.listModelsWithDiscovery(ctx)
 }
 
 // buildRequest translates a harness.Turn to Anthropic MessageNewParams.
