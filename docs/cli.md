@@ -158,6 +158,13 @@ Usage reporting:
 ./godex proxy usage show key_abc123
 ```
 
+Attach to a running local proxy (live logs):
+```bash
+./godex proxy attach
+# Optional filters/streams:
+./godex proxy attach --grep request_id=pxreq_123 --no-upstream-audit
+```
+
 Useful flags:
 - `--listen :8080` — bind address
 - `--allow-any-key` — accept any incoming API key (dev only)
@@ -176,6 +183,14 @@ Useful flags:
 - `--events-max-backups <n>` — max rotated events files
 - `--meter-window <dur>` — metering window (resets totals each window)
 - `--meter-window <duration>` — usage window (e.g., 24h)
+
+`godex proxy attach` flags:
+- `--service <name>` — systemd user unit (default: `godex-proxy.service`)
+- `--no-journal` / `--no-trace` / `--no-upstream-audit` / `--no-events` — disable streams
+- `--trace-path <file>` / `--upstream-audit-path <file>` / `--events-path <file>` — override files
+- `--since <when>` — journal lookback (example: `10 min ago`)
+- `--journal-lines <n>` — initial journal lines when `--since` is omitted
+- `--grep <text>` — filter displayed lines by substring
 
 See `docs/proxy.md` for full proxy documentation, including L402 payment flows.
 

@@ -761,6 +761,8 @@ func runProxy(args []string) error {
 			return runProxyUsage(args[1:])
 		case "replay":
 			return runProxyReplay(args[1:])
+		case "attach":
+			return runProxyAttach(args[1:])
 		}
 	}
 
@@ -1904,6 +1906,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "       godex proxy keys list | update <id> | revoke <id|key> | rotate <id|key>")
 	fmt.Fprintln(os.Stderr, "       godex proxy usage --config <path> list [--since 24h] [--key <id>] | show <id>")
 	fmt.Fprintln(os.Stderr, "       godex proxy replay [--request-id <id>|latest] [--list N] [--trace-path path] [--audit-path path] [--url http://127.0.0.1:39001] [--api-key key]")
+	fmt.Fprintln(os.Stderr, "       godex proxy attach [--service godex-proxy.service] [--no-journal] [--no-trace] [--no-upstream-audit] [--trace-path path] [--upstream-audit-path path]")
 	fmt.Fprintln(os.Stderr, "       godex probe <model> [--url http://127.0.0.1:39001] [--key <api-key>] [--json]")
 	fmt.Fprintln(os.Stderr, "       godex auth status | setup")
 	fmt.Fprintln(os.Stderr, "       godex aliases list | update [--dry-run]")

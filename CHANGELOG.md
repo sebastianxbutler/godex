@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0 - 2026-02-19
+### Added
+- **Live proxy attach command**: Added `godex proxy attach` to stream local proxy diagnostics in real time from systemd journal, proxy trace logs, and upstream audit logs.
+- **Attach stream controls**: Added `proxy attach` flags for stream selection, file-path overrides, journal lookback, and substring filtering (`--grep`).
+
+### Changed
+- **CLI documentation updates**: Documented `godex proxy attach` usage and its operational flags in `docs/cli.md`.
+
 ## 0.10.1 - 2026-02-19
 ### Fixed
 - **Responses API tool-arg event shape**: `response.function_call_arguments.done` now emits top-level `arguments` (with `item_id`) instead of nesting arguments under `item`, restoring compatibility with OpenClaw tool-argument parsing.
