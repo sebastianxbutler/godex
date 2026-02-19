@@ -35,6 +35,22 @@ func TestCountInvalidExecPairs_IgnoresNonMatching(t *testing.T) {
 	}
 }
 
+func TestDropInvalidExecPairs(t *testing.T) {
+	items := []OpenAIItem{
+		{Type: "message", Role: "user", Content: "run ls"},
+		{Type: "function_call", CallID: "c1", Name: "exec", Arguments: "{}"},
+		{Type: "function_call_output", CallID: "c1", Output: "Validation failed for tool \"exec\":\n  - command: must have required property 'command'"},
+		{Type: "message", Role: "assistant", Content: "retrying"},
+	}
+	out := dropInvalidExecPairs(items)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 items after drop, got %d", len(out))
+	}
+	if out[0].Role != "user" || out[1].Role != "assistant" {
+		t.Fatalf("unexpected items after drop: %#v", out)
+	}
+}
+
 func TestRequireAuthAllowAnyKey(t *testing.T) {
 	s := &Server{cfg: Config{AllowAnyKey: true}}
 	rr := httptest.NewRecorder()

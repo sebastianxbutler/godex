@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.3 - 2026-02-19
+### Fixed
+- **Exec loop recovery**: Replaced hard loop-stop behavior with history cleanup that drops poisoned `exec {}` validation-failure pairs before mapping input.
+- **Empty exec arg repair**: In streaming responses, empty `exec` arguments are repaired from recent conversational command context (for example backticked/quoted commands), preventing repeated `command`-missing tool failures.
+
 ## 0.9.2 - 2026-02-19
 ### Fixed
 - **Exec retry-loop guard**: `/v1/responses` now detects repeated `exec` tool failures with empty `{}` arguments and short-circuits the loop with a normal assistant message instead of allowing endless tool retry cycles.

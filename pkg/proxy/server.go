@@ -423,87 +423,8 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	if req.Stream != nil {
 		stream = *req.Stream
 	}
-	if badPairs := countInvalidExecPairs(items); badPairs >= 8 {
-		msg := fmt.Sprintf("Stopping repeated invalid exec loop after %d failed tool attempts. Please retry with explicit exec args, for example: {\"command\":\"ls\",\"workdir\":\"/home/cmd/clawd\"}.", badPairs)
-		if stream {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			flusher, ok := w.(http.Flusher)
-			if !ok {
-				writeError(w, http.StatusInternalServerError, errNoFlusher)
-				s.logRequest(r, http.StatusInternalServerError, start)
-				return
-			}
-			respID := newResponseID("resp")
-			_ = writeSSE(w, flusher, map[string]any{
-				"type": "response.created",
-				"response": map[string]any{
-					"id":     respID,
-					"object": "response",
-					"status": "in_progress",
-					"model":  req.Model,
-				},
-			})
-			_ = writeSSE(w, flusher, map[string]any{
-				"type":         "response.output_item.added",
-				"output_index": 0,
-				"item": map[string]any{
-					"id":      "msg_loop_guard",
-					"type":    "message",
-					"role":    "assistant",
-					"content": []any{},
-				},
-			})
-			_ = writeSSE(w, flusher, map[string]any{
-				"type":          "response.content_part.added",
-				"output_index":  0,
-				"content_index": 0,
-				"part": map[string]any{
-					"type": "output_text",
-					"text": "",
-				},
-			})
-			_ = writeSSE(w, flusher, map[string]any{
-				"type":          "response.output_text.delta",
-				"output_index":  0,
-				"content_index": 0,
-				"delta":         msg,
-			})
-			_ = writeSSE(w, flusher, map[string]any{
-				"type":          "response.output_text.done",
-				"output_index":  0,
-				"content_index": 0,
-				"text":          msg,
-			})
-			_ = writeSSE(w, flusher, map[string]any{
-				"type": "response.completed",
-				"response": map[string]any{
-					"id":     respID,
-					"object": "response",
-					"status": "completed",
-					"model":  req.Model,
-				},
-			})
-			_, _ = w.Write([]byte("data: [DONE]\n\n"))
-			flusher.Flush()
-		} else {
-			writeJSON(w, http.StatusOK, OpenAIResponsesResponse{
-				ID:     newResponseID("resp"),
-				Object: "response",
-				Model:  req.Model,
-				Output: []OpenAIRespItem{{
-					Type: "message",
-					Role: "assistant",
-					Content: []OpenAIRespContent{{
-						Type: "output_text",
-						Text: msg,
-					}},
-				}},
-			})
-		}
-		s.logRequest(r, http.StatusOK, start)
-		return
+	if badPairs := countInvalidExecPairs(items); badPairs > 0 {
+		items = dropInvalidExecPairs(items)
 	}
 	input, system, err := buildSystemAndInput(sessionKey, items, s.cache)
 	if err != nil {
@@ -623,6 +544,49 @@ func countInvalidExecPairs(items []OpenAIItem) int {
 		}
 	}
 	return count
+}
+
+func dropInvalidExecPairs(items []OpenAIItem) []OpenAIItem {
+	if len(items) == 0 {
+		return items
+	}
+	emptyExec := map[string]bool{}
+	invalidResult := map[string]bool{}
+	for _, item := range items {
+		switch item.Type {
+		case "function_call":
+			if item.CallID != "" && item.Name == "exec" && strings.TrimSpace(item.Arguments) == "{}" {
+				emptyExec[item.CallID] = true
+			}
+		case "function_call_output":
+			if item.CallID != "" {
+				out := strings.ToLower(item.Output)
+				if strings.Contains(out, "validation failed for tool \"exec\"") && strings.Contains(out, "required property 'command'") {
+					invalidResult[item.CallID] = true
+				}
+			}
+		}
+	}
+	if len(emptyExec) == 0 || len(invalidResult) == 0 {
+		return items
+	}
+	drop := map[string]bool{}
+	for id := range emptyExec {
+		if invalidResult[id] {
+			drop[id] = true
+		}
+	}
+	if len(drop) == 0 {
+		return items
+	}
+	out := make([]OpenAIItem, 0, len(items))
+	for _, item := range items {
+		if item.CallID != "" && drop[item.CallID] && (item.Type == "function_call" || item.Type == "function_call_output") {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (s *Server) sessionKey(user string, r *http.Request) string {

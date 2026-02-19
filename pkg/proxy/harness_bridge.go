@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"godex/pkg/harness"
@@ -103,6 +105,11 @@ func (s *Server) harnessResponsesStream(
 				return nil
 			}
 			tc := ev.ToolCall
+			if tc.Name == "exec" && strings.TrimSpace(tc.Arguments) == "{}" {
+				if repaired, ok := repairEmptyExecArgs(turn); ok {
+					tc.Arguments = repaired
+				}
+			}
 			// If we had a text item, close it and advance
 			if textItemStarted {
 				itemIndex++
@@ -269,6 +276,74 @@ func (s *Server) harnessResponsesStream(
 	}
 
 	return nil
+}
+
+func repairEmptyExecArgs(turn *harness.Turn) (string, bool) {
+	cmd, ok := inferCommandFromMessages(turn.Messages)
+	if !ok {
+		return "", false
+	}
+	args := map[string]string{"command": cmd}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
+func inferCommandFromMessages(messages []harness.Message) (string, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != "user" && msg.Role != "assistant" {
+			continue
+		}
+		if cmd, ok := extractBacktickCommand(msg.Content); ok {
+			return cmd, true
+		}
+		if cmd, ok := extractQuotedCommand(msg.Content); ok {
+			return cmd, true
+		}
+		if mentionsLsCommand(msg.Content) {
+			return "ls", true
+		}
+	}
+	return "", false
+}
+
+var backtickCmdRE = regexp.MustCompile("`([^`\\n]+)`")
+var quotedCmdRE = regexp.MustCompile(`"([^"\n]+)"`)
+
+func extractBacktickCommand(s string) (string, bool) {
+	matches := backtickCmdRE.FindAllStringSubmatch(s, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		candidate := strings.TrimSpace(matches[i][1])
+		if candidate != "" {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func extractQuotedCommand(s string) (string, bool) {
+	lower := strings.ToLower(s)
+	if !strings.Contains(lower, "command") {
+		return "", false
+	}
+	matches := quotedCmdRE.FindAllStringSubmatch(s, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		candidate := strings.TrimSpace(matches[i][1])
+		if candidate != "" {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func mentionsLsCommand(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "run ls") ||
+		strings.Contains(lower, "\"ls\" command") ||
+		strings.Contains(lower, "try running ls")
 }
 
 // harnessResponsesNonStream handles a non-streaming /v1/responses request via harness.
