@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -105,9 +106,12 @@ func (s *Server) harnessResponsesStream(
 				return nil
 			}
 			tc := ev.ToolCall
-			if tc.Name == "exec" && strings.TrimSpace(tc.Arguments) == "{}" {
+			if tc.Name == "exec" && needsExecArgRepair(tc.Arguments) {
 				if repaired, ok := repairEmptyExecArgs(turn); ok {
+					log.Printf("[INFO] repaired empty/invalid exec args call_id=%s args=%s", tc.CallID, repaired)
 					tc.Arguments = repaired
+				} else {
+					log.Printf("[WARN] unable to infer exec args for call_id=%s original=%q", tc.CallID, tc.Arguments)
 				}
 			}
 			// If we had a text item, close it and advance
@@ -289,6 +293,26 @@ func repairEmptyExecArgs(turn *harness.Turn) (string, bool) {
 		return "", false
 	}
 	return string(raw), true
+}
+
+func needsExecArgRepair(args string) bool {
+	trimmed := strings.TrimSpace(args)
+	if trimmed == "" || trimmed == "{}" {
+		return true
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return true
+	}
+	if len(parsed) == 0 {
+		return true
+	}
+	cmdRaw, ok := parsed["command"]
+	if !ok {
+		return true
+	}
+	cmd, ok := cmdRaw.(string)
+	return !ok || strings.TrimSpace(cmd) == ""
 }
 
 func inferCommandFromMessages(messages []harness.Message) (string, bool) {

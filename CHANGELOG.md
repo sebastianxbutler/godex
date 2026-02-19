@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.4 - 2026-02-19
+### Fixed
+- **Exec arg repair hardening**: Proxy now repairs `exec` tool calls whenever `command` is missing/empty (not only `{}`), and emits diagnostics for repair success/failure in proxy logs.
+
 ## 0.9.3 - 2026-02-19
 ### Fixed
 - **Exec loop recovery**: Replaced hard loop-stop behavior with history cleanup that drops poisoned `exec {}` validation-failure pairs before mapping input.

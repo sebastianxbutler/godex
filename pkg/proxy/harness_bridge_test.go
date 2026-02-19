@@ -46,3 +46,21 @@ func TestRepairEmptyExecArgs_NoSignal(t *testing.T) {
 		t.Fatalf("expected no repaired args")
 	}
 }
+
+func TestNeedsExecArgRepair(t *testing.T) {
+	cases := []struct {
+		args string
+		want bool
+	}{
+		{"{}", true},
+		{"", true},
+		{`{"workdir":"/tmp"}`, true},
+		{`{"command":""}`, true},
+		{`{"command":"ls"}`, false},
+	}
+	for _, tc := range cases {
+		if got := needsExecArgRepair(tc.args); got != tc.want {
+			t.Fatalf("needsExecArgRepair(%q)=%v want %v", tc.args, got, tc.want)
+		}
+	}
+}
