@@ -96,11 +96,6 @@ func (r *Router) HarnessFor(model string) harness.Harness {
 		}
 	}
 
-	// Fallback to first registered harness
-	if len(r.harnesses) > 0 {
-		return r.harnesses[0].harness
-	}
-
 	return nil
 }
 

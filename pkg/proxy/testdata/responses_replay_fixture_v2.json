@@ -1,0 +1,116 @@
+{
+  "model": "gpt-5.3-codex",
+  "stream": true,
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "max_output_tokens": 8192,
+  "input": [
+    {
+      "type": "message",
+      "role": "system",
+      "content": "You are a personal assistant running inside OpenClaw. Use tools directly."
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Run session_status and then ls in the current directory."
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_prev_status",
+      "name": "session_status",
+      "arguments": "{}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_prev_status",
+      "output": "OpenClaw status: healthy"
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_prev_exec_2",
+      "name": "exec",
+      "arguments": "{}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_prev_exec_2",
+      "output": "Validation failed for tool \"exec\": command is required"
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Retry the ls call with explicit command arguments."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "exec",
+      "description": "Execute shell commands with background continuation.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "workdir": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "type": "string"
+              }
+            }
+          },
+          "yieldMs": {
+            "type": "number"
+          },
+          "background": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "type": "number"
+          },
+          "pty": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "security": {
+            "type": "string"
+          },
+          "ask": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "session_status",
+      "description": "Show a status card.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionKey": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "strict": false
+    }
+  ]
+}

@@ -74,6 +74,9 @@ type StreamEvent struct {
 	Part     *ContentPart `json:"part,omitempty"`
 	Delta    string       `json:"delta,omitempty"`
 	ItemID   string       `json:"item_id,omitempty"`
+	CallID   string       `json:"call_id,omitempty"`
+	Name     string       `json:"name,omitempty"`
+	Arguments string      `json:"arguments,omitempty"`
 	Message  string       `json:"message,omitempty"`
 }
 

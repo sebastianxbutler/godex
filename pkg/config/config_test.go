@@ -44,9 +44,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Proxy.Backends.Anthropic.Enabled {
 		t.Error("Anthropic backend should be disabled by default")
 	}
-	if cfg.Proxy.Backends.Routing.Default != "codex" {
-		t.Errorf("Routing.Default = %q, want %q", cfg.Proxy.Backends.Routing.Default, "codex")
-	}
 }
 
 func TestDefaultPath(t *testing.T) {
@@ -243,7 +240,6 @@ proxy:
       enabled: true
       default_max_tokens: 8192
     routing:
-      default: anthropic
       aliases:
         custom: custom-model-id
 `
@@ -283,9 +279,6 @@ proxy:
 	}
 	if cfg.Proxy.Backends.Anthropic.DefaultMaxTokens != 8192 {
 		t.Errorf("Anthropic.DefaultMaxTokens = %d", cfg.Proxy.Backends.Anthropic.DefaultMaxTokens)
-	}
-	if cfg.Proxy.Backends.Routing.Default != "anthropic" {
-		t.Errorf("Routing.Default = %q", cfg.Proxy.Backends.Routing.Default)
 	}
 	if cfg.Proxy.Backends.Routing.Aliases["custom"] != "custom-model-id" {
 		t.Errorf("custom alias = %q", cfg.Proxy.Backends.Routing.Aliases["custom"])

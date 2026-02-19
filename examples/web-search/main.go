@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"godex/pkg/auth"
-	"godex/pkg/client"
+	harnessCodex "godex/pkg/harness/codex"
 	"godex/pkg/protocol"
 )
 
@@ -31,7 +31,7 @@ func main() {
 		PromptCacheKey: "web-search-example",
 	}
 
-	cl := client.New(nil, store, client.Config{SessionID: "web-search-example"})
+	cl := harnessCodex.NewClient(nil, store, harnessCodex.ClientConfig{SessionID: "web-search-example"})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

@@ -61,6 +61,9 @@ func ParseStream(r io.Reader, emit func(Event) error) error {
 type Collector struct {
 	itemToCallID map[string]string
 	callArgs     map[string]*strings.Builder
+	callNames    map[string]string
+	itemArgs     map[string]*strings.Builder
+	emittedCalls map[string]bool
 	text         strings.Builder
 }
 
@@ -68,6 +71,9 @@ func NewCollector() *Collector {
 	return &Collector{
 		itemToCallID: map[string]string{},
 		callArgs:     map[string]*strings.Builder{},
+		callNames:    map[string]string{},
+		itemArgs:     map[string]*strings.Builder{},
+		emittedCalls: map[string]bool{},
 	}
 }
 
@@ -76,17 +82,76 @@ func (c *Collector) Observe(ev protocol.StreamEvent) {
 		item := ev.Item
 		if item.ID != "" && item.CallID != "" {
 			c.itemToCallID[item.ID] = item.CallID
+			if pending, ok := c.itemArgs[item.ID]; ok {
+				builder := c.ensureCallBuilder(item.CallID)
+				builder.WriteString(pending.String())
+				delete(c.itemArgs, item.ID)
+			}
+		}
+		if item.CallID != "" && item.Name != "" {
+			c.callNames[item.CallID] = item.Name
 		}
 		if item.Type == "function_call" && item.CallID != "" && item.Arguments != "" {
 			builder := c.ensureCallBuilder(item.CallID)
-			builder.WriteString(item.Arguments)
+			if builder.Len() == 0 {
+				builder.WriteString(item.Arguments)
+			}
 		}
 	}
 	if ev.Type == "response.function_call_arguments.delta" {
-		callID := c.itemToCallID[ev.ItemID]
+		callID := ev.CallID
+		if callID == "" {
+			callID = c.itemToCallID[ev.ItemID]
+		}
 		if callID != "" && ev.Delta != "" {
 			builder := c.ensureCallBuilder(callID)
 			builder.WriteString(ev.Delta)
+		} else if ev.ItemID != "" && ev.Delta != "" {
+			builder := c.ensureItemBuilder(ev.ItemID)
+			builder.WriteString(ev.Delta)
+		}
+	}
+	if ev.Type == "response.function_call_arguments.done" {
+		if ev.Item != nil {
+			if ev.Item.ID != "" && ev.Item.CallID != "" {
+				c.itemToCallID[ev.Item.ID] = ev.Item.CallID
+				if pending, ok := c.itemArgs[ev.Item.ID]; ok {
+					builder := c.ensureCallBuilder(ev.Item.CallID)
+					builder.WriteString(pending.String())
+					delete(c.itemArgs, ev.Item.ID)
+				}
+			}
+			if ev.Item.CallID != "" && ev.Item.Name != "" {
+				c.callNames[ev.Item.CallID] = ev.Item.Name
+			}
+			if ev.Item.CallID != "" && ev.Item.Arguments != "" {
+				builder := c.ensureCallBuilder(ev.Item.CallID)
+				if builder.Len() == 0 {
+					builder.WriteString(ev.Item.Arguments)
+				}
+			}
+		}
+		if ev.CallID != "" && ev.Name != "" {
+			c.callNames[ev.CallID] = ev.Name
+		}
+		if ev.CallID != "" && ev.Arguments != "" {
+			builder := c.ensureCallBuilder(ev.CallID)
+			if builder.Len() == 0 {
+				builder.WriteString(ev.Arguments)
+			}
+		} else if ev.ItemID != "" && ev.Arguments != "" {
+			callID := c.itemToCallID[ev.ItemID]
+			if callID != "" {
+				builder := c.ensureCallBuilder(callID)
+				if builder.Len() == 0 {
+					builder.WriteString(ev.Arguments)
+				}
+			} else {
+				builder := c.ensureItemBuilder(ev.ItemID)
+				if builder.Len() == 0 {
+					builder.WriteString(ev.Arguments)
+				}
+			}
 		}
 	}
 	if ev.Type == "response.output_text.delta" {
@@ -104,6 +169,14 @@ func (c *Collector) FunctionArgs(callID string) string {
 	return ""
 }
 
+func (c *Collector) FunctionName(callID string) string {
+	return c.callNames[callID]
+}
+
+func (c *Collector) CallIDForItem(itemID string) string {
+	return c.itemToCallID[itemID]
+}
+
 func (c *Collector) AllFunctionArgs() map[string]string {
 	out := make(map[string]string, len(c.callArgs))
 	for k, b := range c.callArgs {
@@ -116,11 +189,31 @@ func (c *Collector) OutputText() string {
 	return c.text.String()
 }
 
+func (c *Collector) MarkToolCallEmitted(callID string) bool {
+	if callID == "" {
+		return true
+	}
+	if c.emittedCalls[callID] {
+		return false
+	}
+	c.emittedCalls[callID] = true
+	return true
+}
+
 func (c *Collector) ensureCallBuilder(callID string) *strings.Builder {
 	if b := c.callArgs[callID]; b != nil {
 		return b
 	}
 	b := &strings.Builder{}
 	c.callArgs[callID] = b
+	return b
+}
+
+func (c *Collector) ensureItemBuilder(itemID string) *strings.Builder {
+	if b := c.itemArgs[itemID]; b != nil {
+		return b
+	}
+	b := &strings.Builder{}
+	c.itemArgs[itemID] = b
 	return b
 }

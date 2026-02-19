@@ -3,11 +3,15 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"godex/pkg/harness"
 	"godex/pkg/protocol"
+	"godex/pkg/schema"
 	"godex/pkg/sse"
 )
 
@@ -175,15 +179,34 @@ func (h *Harness) buildRequest(turn *harness.Turn) (protocol.ResponsesRequest, e
 	var tools []protocol.ToolSpec
 	if len(turn.Tools) > 0 {
 		for _, t := range turn.Tools {
-			var params json.RawMessage
+			var paramsMap map[string]any
 			if t.Parameters != nil {
-				params, _ = json.Marshal(t.Parameters)
+				paramsMap = make(map[string]any, len(t.Parameters))
+				for k, v := range t.Parameters {
+					paramsMap[k] = v
+				}
+			}
+			typ, _ := paramsMap["type"].(string)
+			if typ == "" && (paramsMap["properties"] != nil || paramsMap["required"] != nil) {
+				paramsMap["type"] = "object"
+				typ = "object"
+			}
+			if typ == "object" {
+				if _, ok := paramsMap["additionalProperties"]; !ok {
+					paramsMap["additionalProperties"] = false
+				}
+				schema.NormalizeStrictSchemaNode(paramsMap)
+			}
+			var params json.RawMessage
+			if paramsMap != nil {
+				params, _ = json.Marshal(paramsMap)
 			}
 			tools = append(tools, protocol.ToolSpec{
 				Type:        "function",
 				Name:        t.Name,
 				Description: t.Description,
 				Parameters:  params,
+				Strict:      true,
 			})
 		}
 	} else {
@@ -230,29 +253,58 @@ func (h *Harness) translateEvent(ev protocol.StreamEvent, collector *sse.Collect
 		}
 
 	case "response.function_call_arguments.done":
+		callID := ""
+		name := ""
+		args := ""
 		if ev.Item != nil {
-			callID := ev.Item.CallID
-			name := ev.Item.Name
-			args := collector.FunctionArgs(callID)
-			if args == "" {
+			callID = ev.Item.CallID
+			name = ev.Item.Name
+			args = collector.FunctionArgs(callID)
+			if shouldPreferSnapshotArgs(args, ev.Item.Arguments) {
 				args = ev.Item.Arguments
 			}
-
-			// Check if this is an update_plan call — translate to PlanEvent
-			if name == "update_plan" {
-				return h.emitPlanEvents(args, emit)
+		} else {
+			callID = ev.CallID
+			if callID == "" {
+				callID = collector.CallIDForItem(ev.ItemID)
 			}
-
-			return emit(harness.NewToolCallEvent(callID, name, args))
+			if callID == "" {
+				callID = ev.ItemID
+			}
+			name = ev.Name
+			if name == "" {
+				name = collector.FunctionName(callID)
+			}
+			args = collector.FunctionArgs(callID)
+			if shouldPreferSnapshotArgs(args, ev.Arguments) {
+				args = ev.Arguments
+			}
 		}
+		if callID == "" || name == "" {
+			return nil
+		}
+		args = normalizeToolCallArguments(args)
+		if !collector.MarkToolCallEmitted(callID) {
+			return nil
+		}
+
+		// Check if this is an update_plan call — translate to PlanEvent
+		if name == "update_plan" {
+			return h.emitPlanEvents(args, emit)
+		}
+		return emit(harness.NewToolCallEvent(callID, name, args))
 
 	case "response.output_item.done":
 		if ev.Item != nil && ev.Item.Type == "function_call" {
 			callID := ev.Item.CallID
 			name := ev.Item.Name
 			args := collector.FunctionArgs(callID)
-			if args == "" {
+			if shouldPreferSnapshotArgs(args, ev.Item.Arguments) {
 				args = ev.Item.Arguments
+			}
+			args = normalizeToolCallArguments(args)
+			if !collector.MarkToolCallEmitted(callID) {
+				return nil
 			}
 
 			if name == "update_plan" {
@@ -279,6 +331,81 @@ func (h *Harness) translateEvent(ev protocol.StreamEvent, collector *sse.Collect
 	}
 
 	return nil
+}
+
+func shouldPreferSnapshotArgs(collected, snapshot string) bool {
+	collected = strings.TrimSpace(collected)
+	snapshot = strings.TrimSpace(snapshot)
+	if snapshot == "" {
+		return false
+	}
+	if collected == "" {
+		return true
+	}
+	// Some providers emit "{}" on output_item.added, then emit full args on done.
+	// Prefer the richer done snapshot in that case.
+	return collected == "{}" && snapshot != "{}"
+}
+
+func normalizeToolCallArguments(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+
+	// Some streams can concatenate multiple JSON values for a single call
+	// (for example: {}{"command":"ls"}). Keep the last valid value.
+	var last any
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	for {
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return raw
+		}
+		last = v
+	}
+	if last == nil {
+		return raw
+	}
+	last = sanitizeJSONValue(last)
+	b, err := json.Marshal(last)
+	if err != nil {
+		return raw
+	}
+	return string(b)
+}
+
+func sanitizeJSONValue(v any) any {
+	switch vv := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(vv))
+		for k, child := range vv {
+			clean := sanitizeJSONValue(child)
+			if clean == nil {
+				continue
+			}
+			out[k] = clean
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(vv))
+		for _, child := range vv {
+			clean := sanitizeJSONValue(child)
+			if clean == nil {
+				continue
+			}
+			out = append(out, clean)
+		}
+		return out
+	case nil:
+		return nil
+	default:
+		return vv
+	}
 }
 
 // emitPlanEvents parses update_plan arguments and emits PlanEvent for each step.

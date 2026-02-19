@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	"godex/pkg/protocol"
 	"godex/pkg/proxy"
 	"godex/pkg/router"
-	"godex/pkg/sse"
 )
 
 type toolFlags []string
@@ -112,7 +110,6 @@ func runExec(args []string) error {
 	var tools toolFlags
 	var outputs outputFlags
 	var sessionID string
-	var images toolFlags
 	var logRequests string
 	var logResponses string
 	var providerKey string
@@ -135,7 +132,6 @@ func runExec(args []string) error {
 	fs.Var(&tools, "tool", "Tool spec (repeatable): web_search or name:json=/path/schema.json")
 	fs.Var(&outputs, "tool-output", "Static tool output: name=value or name=$args (repeatable)")
 	fs.StringVar(&sessionID, "session-id", "", "Optional session id (reuses prompt cache key)")
-	fs.Var(&images, "image", "Image path (ignored; accepted for OpenClaw CLI compatibility)")
 	fs.StringVar(&logRequests, "log-requests", "", "Write JSON request payload to file")
 	fs.StringVar(&logResponses, "log-responses", "", "Append JSONL response events to file")
 	fs.StringVar(&providerKey, "provider-key", "", "API key for non-Codex backends (or set via env per provider)")
@@ -272,24 +268,16 @@ func runExec(args []string) error {
 		return emitMockStream(req, jsonOnly, logResponses, mockMode)
 	}
 
-	// Build the Codex harness
-	baseURL := cfg.Client.BaseURL
-	if baseURL == "" {
-		baseURL = "https://chatgpt.com/backend-api/codex"
+	execRouter, err := buildExecHarnessRouter(cfg, store, allowRefresh, sessionID, nativeTools)
+	if err != nil {
+		return err
 	}
-	codexClient := harnessCodexP.NewClient(nil, store, harnessCodexP.ClientConfig{
-		SessionID:    sessionID,
-		AllowRefresh: allowRefresh,
-		BaseURL:      baseURL,
-		Originator:   cfg.Client.Originator,
-		UserAgent:    cfg.Client.UserAgent,
-		RetryMax:     cfg.Client.RetryMax,
-		RetryDelay:   cfg.Client.RetryDelay,
-	})
-	h := harnessCodexP.New(harnessCodexP.Config{
-		Client:      codexClient,
-		NativeTools: nativeTools,
-	})
+	model = execRouter.ExpandAlias(model)
+	turn.Model = model
+	h := execRouter.HarnessFor(model)
+	if h == nil {
+		return fmt.Errorf("no harness configured for model %q", model)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Exec.Timeout)
 	defer cancel()
@@ -299,23 +287,36 @@ func runExec(args []string) error {
 		ctx = harness.WithProviderKey(ctx, providerKey)
 	}
 
+	onEvent := newExecEventHandler(jsonOnly, trace, logResponses)
 	if autoTools {
 		outputs, err := parseToolOutputs(outputs)
 		if err != nil {
 			return err
 		}
 		handler := execToolHandler{outputs: outputs}
-		result, err := h.RunToolLoop(ctx, turn, handler, harness.LoopOptions{MaxTurns: cfg.Exec.AutoToolsMax})
+		result, err := h.RunToolLoop(ctx, turn, handler, harness.LoopOptions{
+			MaxTurns: cfg.Exec.AutoToolsMax,
+			OnEvent:  onEvent,
+		})
 		if err != nil {
 			return err
 		}
-		if !jsonOnly {
-			fmt.Print(result.FinalText)
-		}
+		_ = result
 		return nil
 	}
 
-	return h.StreamTurn(ctx, turn, func(ev harness.Event) error {
+	return h.StreamTurn(ctx, turn, onEvent)
+}
+
+func newExecEventHandler(jsonOnly, trace bool, logResponses string) func(harness.Event) error {
+	var jsonEmitter *execJSONEmitter
+	if jsonOnly {
+		jsonEmitter = newExecJSONEmitter(os.Stdout, logResponses)
+	}
+	return func(ev harness.Event) error {
+		if jsonEmitter != nil {
+			return jsonEmitter.Emit(ev)
+		}
 		if logResponses != "" {
 			if f, err := os.OpenFile(logResponses, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 				buf, _ := json.Marshal(ev)
@@ -323,43 +324,149 @@ func runExec(args []string) error {
 				_ = f.Close()
 			}
 		}
-		if jsonOnly {
-			switch ev.Kind {
-			case harness.EventError:
-				errMsg := "unknown error"
-				if ev.Error != nil {
-					errMsg = ev.Error.Message
-				}
-				payload := struct {
-					Type    string `json:"type"`
-					Message string `json:"message"`
-				}{Type: "error", Message: errMsg}
-				buf, _ := json.Marshal(payload)
-				fmt.Println(string(buf))
-				return nil
-			case harness.EventToolCall:
-				if ev.ToolCall != nil {
-					buf, _ := json.Marshal(ev)
-					fmt.Println(string(buf))
-				}
-				return nil
-			}
-			buf, _ := json.Marshal(ev)
-			fmt.Println(string(buf))
-			return nil
-		}
 		if trace {
 			buf, _ := json.Marshal(ev)
 			fmt.Println(string(buf))
 		}
-		switch ev.Kind {
-		case harness.EventText:
-			if ev.Text != nil {
-				fmt.Print(ev.Text.Delta)
-			}
+		if ev.Kind == harness.EventText && ev.Text != nil {
+			fmt.Print(ev.Text.Delta)
 		}
 		return nil
+	}
+}
+
+type execJSONEmitter struct {
+	w          io.Writer
+	logPath    string
+	textOpened bool
+	usage      *harness.UsageEvent
+	toolSeq    int
+	completed  bool
+}
+
+func newExecJSONEmitter(w io.Writer, logPath string) *execJSONEmitter {
+	return &execJSONEmitter{w: w, logPath: logPath}
+}
+
+func (e *execJSONEmitter) Emit(ev harness.Event) error {
+	switch ev.Kind {
+	case harness.EventText:
+		if ev.Text == nil || ev.Text.Delta == "" {
+			return nil
+		}
+		if !e.textOpened {
+			e.textOpened = true
+			if err := e.write(map[string]any{
+				"type": "response.content_part.added",
+				"part": map[string]any{"type": "output_text"},
+			}); err != nil {
+				return err
+			}
+		}
+		return e.write(map[string]any{
+			"type":  "response.output_text.delta",
+			"delta": ev.Text.Delta,
+		})
+	case harness.EventToolCall:
+		if ev.ToolCall == nil {
+			return nil
+		}
+		callID := strings.TrimSpace(ev.ToolCall.CallID)
+		if callID == "" {
+			e.toolSeq++
+			callID = fmt.Sprintf("call_%d", e.toolSeq)
+		}
+		itemID := "item_" + callID
+		if err := e.write(map[string]any{
+			"type": "response.output_item.added",
+			"item": map[string]any{
+				"id":      itemID,
+				"type":    "function_call",
+				"call_id": callID,
+				"name":    ev.ToolCall.Name,
+			},
+		}); err != nil {
+			return err
+		}
+		if strings.TrimSpace(ev.ToolCall.Arguments) != "" {
+			if err := e.write(map[string]any{
+				"type":    "response.function_call_arguments.delta",
+				"item_id": itemID,
+				"delta":   ev.ToolCall.Arguments,
+			}); err != nil {
+				return err
+			}
+		}
+		return e.write(map[string]any{
+			"type": "response.output_item.done",
+			"item": map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"call_id":   callID,
+				"name":      ev.ToolCall.Name,
+				"arguments": ev.ToolCall.Arguments,
+			},
+		})
+	case harness.EventUsage:
+		e.usage = ev.Usage
+		return nil
+	case harness.EventError:
+		msg := "unknown error"
+		if ev.Error != nil && strings.TrimSpace(ev.Error.Message) != "" {
+			msg = ev.Error.Message
+		}
+		return e.write(map[string]any{
+			"type":    "error",
+			"message": msg,
+		})
+	case harness.EventDone:
+		return e.emitCompleted()
+	default:
+		return nil
+	}
+}
+
+func (e *execJSONEmitter) emitCompleted() error {
+	if e.completed {
+		return nil
+	}
+	e.completed = true
+	usage := map[string]any{
+		"input_tokens":  0,
+		"output_tokens": 0,
+		"cached_tokens": 0,
+	}
+	if e.usage != nil {
+		usage["input_tokens"] = e.usage.InputTokens
+		usage["output_tokens"] = e.usage.OutputTokens
+		if e.usage.TotalTokens > 0 {
+			usage["total_tokens"] = e.usage.TotalTokens
+		}
+	}
+	return e.write(map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"status": "completed",
+			"usage":  usage,
+		},
 	})
+}
+
+func (e *execJSONEmitter) write(payload map[string]any) error {
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if _, err := e.w.Write(append(buf, '\n')); err != nil {
+		return err
+	}
+	if e.logPath != "" {
+		if f, err := os.OpenFile(e.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+			_, _ = f.Write(append(buf, '\n'))
+			_ = f.Close()
+		}
+	}
+	return nil
 }
 
 func extractErrorMessage(raw json.RawMessage) string {
@@ -525,6 +632,78 @@ func splitText(text string, size int) []string {
 	return out
 }
 
+func buildExecHarnessRouter(cfg config.Config, store *auth.Store, allowRefresh bool, sessionID string, nativeTools bool) (*router.Router, error) {
+	r := router.New(router.Config{
+		UserAliases:  cfg.Proxy.Backends.Routing.Aliases,
+		UserPatterns: cfg.Proxy.Backends.Routing.Patterns,
+	})
+	registered := 0
+
+	baseURL := cfg.Client.BaseURL
+	if baseURL == "" {
+		baseURL = "https://chatgpt.com/backend-api/codex"
+	}
+	codexClient := harnessCodexP.NewClient(nil, store, harnessCodexP.ClientConfig{
+		SessionID:    sessionID,
+		AllowRefresh: allowRefresh,
+		BaseURL:      baseURL,
+		Originator:   cfg.Client.Originator,
+		UserAgent:    cfg.Client.UserAgent,
+		RetryMax:     cfg.Client.RetryMax,
+		RetryDelay:   cfg.Client.RetryDelay,
+	})
+	r.Register("codex", harnessCodexP.New(harnessCodexP.Config{
+		Client:        codexClient,
+		NativeTools:   nativeTools,
+		ExtraAliases:  cfg.Proxy.Backends.Routing.Aliases,
+		ExtraPrefixes: cfg.Proxy.Backends.Routing.Patterns["codex"],
+	}))
+	registered++
+
+	if cfg.Proxy.Backends.Anthropic.Enabled {
+		anthTokens := harnessClaudeP.NewTokenStore(cfg.Proxy.Backends.Anthropic.CredentialsPath)
+		if err := anthTokens.Load(); err == nil {
+			wrapper := harnessClaudeP.NewClientWrapper(anthTokens, harnessClaudeP.ClientConfig{
+				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+			})
+			r.Register("anthropic", harnessClaudeP.New(harnessClaudeP.Config{
+				Client:           wrapper,
+				DefaultMaxTokens: cfg.Proxy.Backends.Anthropic.DefaultMaxTokens,
+				ExtraAliases:     cfg.Proxy.Backends.Routing.Aliases,
+			}))
+			registered++
+		}
+	}
+
+	for name, bcfg := range cfg.Proxy.Backends.Custom {
+		if !bcfg.IsEnabled() || bcfg.Type != "openai" {
+			continue
+		}
+		client, err := harnessOpenaiP.NewClient(harnessOpenaiP.ClientConfig{
+			Name:      name,
+			BaseURL:   bcfg.BaseURL,
+			Auth:      bcfg.Auth,
+			Timeout:   bcfg.Timeout,
+			Discovery: bcfg.HasDiscovery(),
+			Models:    bcfg.Models,
+		})
+		if err != nil {
+			continue
+		}
+		r.Register(name, harnessOpenaiP.New(harnessOpenaiP.Config{
+			Client:   client,
+			Aliases:  cfg.Proxy.Backends.Routing.Aliases,
+			Prefixes: cfg.Proxy.Backends.Routing.Patterns[name],
+		}))
+		registered++
+	}
+
+	if registered == 0 {
+		return nil, fmt.Errorf("no exec harness backends configured")
+	}
+	return r, nil
+}
+
 func parseToolSpecs(flags []string) ([]protocol.ToolSpec, error) {
 	if len(flags) == 0 {
 		return nil, nil
@@ -670,6 +849,7 @@ func runProxy(args []string) error {
 	}
 	proxyCfg := proxy.Config{
 		Listen:          listen,
+		Version:         Version,
 		APIKey:          apiKey,
 		Model:           model,
 		Models:          models,
@@ -712,7 +892,6 @@ func runProxy(args []string) error {
 			},
 			Custom: cfg.Proxy.Backends.Custom,
 			Routing: proxy.RoutingConfig{
-				Default:  cfg.Proxy.Backends.Routing.Default,
 				Patterns: cfg.Proxy.Backends.Routing.Patterns,
 				Aliases:  cfg.Proxy.Backends.Routing.Aliases,
 			},
@@ -735,9 +914,10 @@ func runProxy(args []string) error {
 
 	// Build harness router
 	harnessRouter := buildHarnessRouter(cfg, proxyCfg)
-	if harnessRouter != nil {
-		proxyCfg.HarnessRouter = harnessRouter
+	if harnessRouter == nil {
+		return errors.New("no harnesses registered: configure at least one enabled backend")
 	}
+	proxyCfg.HarnessRouter = harnessRouter
 
 	return proxy.Run(proxyCfg)
 }
@@ -1095,47 +1275,6 @@ func runProxyUsage(args []string) error {
 	return fmt.Errorf("unknown proxy usage command: %s", cmd)
 }
 
-func envOrDefault(key, fallback string) string {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return fallback
-	}
-	return val
-}
-
-func envBool(key string) bool {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return false
-	}
-	val = strings.ToLower(val)
-	return val == "1" || val == "true" || val == "yes"
-}
-
-func envInt(key string, fallback int) int {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return fallback
-	}
-	out, err := strconv.Atoi(val)
-	if err != nil {
-		return fallback
-	}
-	return out
-}
-
-func envInt64(key string, fallback int64) int64 {
-	val := strings.TrimSpace(os.Getenv(key))
-	if val == "" {
-		return fallback
-	}
-	out, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		return fallback
-	}
-	return out
-}
-
 func defaultString(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -1292,11 +1431,11 @@ func runAuth(args []string) error {
 
 // AuthStatus holds the status of a backend's authentication.
 type AuthStatus struct {
-	Backend     string
-	Configured  bool
-	Path        string
-	ExpiresAt   time.Time
-	Error       string
+	Backend    string
+	Configured bool
+	Path       string
+	ExpiresAt  time.Time
+	Error      string
 }
 
 func runAuthStatus() error {
@@ -1540,15 +1679,8 @@ var execCommand = func(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
 }
 
-// streamClient is a unified interface for exec streaming.
-// Both codex.Client and openai.Client implement StreamResponses and StreamAndCollect.
-type streamClient interface {
-	StreamResponses(ctx context.Context, req protocol.ResponsesRequest, onEvent func(sse.Event) error) error
-	RunToolLoop(ctx context.Context, req protocol.ResponsesRequest, handler harnessCodexP.ToolLoopHandler, opts harnessCodexP.ToolLoopOptions) (harnessCodexP.StreamResult, error)
-}
-
-// resolveClient picks the right client based on model name.
-// For Codex models, uses OAuth. For others, uses the OpenAI-compatible client.
+// resolveClient constructs the Codex-wire client used by exec.
+// Backend selection is handled upstream by model routing and proxy configuration.
 func resolveClient(model string, store *auth.Store, cfg config.Config, allowRefresh bool, sessionID, providerKey string) (*harnessCodexP.Client, error) {
 	// For now, all exec paths use the Codex-wire-format client.
 	// The Codex endpoint handles routing for non-Codex models via the proxy.

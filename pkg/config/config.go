@@ -101,21 +101,21 @@ type PaymentsConfig struct {
 
 // BackendsConfig configures available LLM backends.
 type BackendsConfig struct {
-	Codex     CodexBackendConfig            `yaml:"codex"`
-	Anthropic AnthropicBackendConfig        `yaml:"anthropic"`
+	Codex     CodexBackendConfig             `yaml:"codex"`
+	Anthropic AnthropicBackendConfig         `yaml:"anthropic"`
 	Custom    map[string]CustomBackendConfig `yaml:"custom"`
-	Routing   RoutingConfig                 `yaml:"routing"`
+	Routing   RoutingConfig                  `yaml:"routing"`
 }
 
 // CustomBackendConfig configures a user-defined OpenAI-compatible backend.
 type CustomBackendConfig struct {
-	Type      string              `yaml:"type"`      // "openai"
-	Enabled   *bool               `yaml:"enabled"`   // default true
-	BaseURL   string              `yaml:"base_url"`
-	Auth      BackendAuthConfig   `yaml:"auth"`
-	Timeout   time.Duration       `yaml:"timeout"`
-	Discovery *bool               `yaml:"discovery"` // auto-probe /v1/models
-	Models    []BackendModelDef   `yaml:"models"`    // hard-coded models
+	Type      string            `yaml:"type"`    // "openai"
+	Enabled   *bool             `yaml:"enabled"` // default true
+	BaseURL   string            `yaml:"base_url"`
+	Auth      BackendAuthConfig `yaml:"auth"`
+	Timeout   time.Duration     `yaml:"timeout"`
+	Discovery *bool             `yaml:"discovery"` // auto-probe /v1/models
+	Models    []BackendModelDef `yaml:"models"`    // hard-coded models
 }
 
 // IsEnabled returns true if the backend is enabled (default true).
@@ -156,19 +156,18 @@ type CodexBackendConfig struct {
 	// NativeTools forces Codex's built-in tools (shell, apply_patch, update_plan)
 	// even when the caller provides their own tools. Default false (proxy mode
 	// uses caller's tools).
-	NativeTools     bool   `yaml:"native_tools"`
+	NativeTools bool `yaml:"native_tools"`
 }
 
 // AnthropicBackendConfig configures the Anthropic backend.
 type AnthropicBackendConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	CredentialsPath string `yaml:"credentials_path"`
-	DefaultMaxTokens int   `yaml:"default_max_tokens"`
+	Enabled          bool   `yaml:"enabled"`
+	CredentialsPath  string `yaml:"credentials_path"`
+	DefaultMaxTokens int    `yaml:"default_max_tokens"`
 }
 
 // RoutingConfig configures model-to-backend routing.
 type RoutingConfig struct {
-	Default  string              `yaml:"default"`
 	Patterns map[string][]string `yaml:"patterns"`
 	Aliases  map[string]string   `yaml:"aliases"`
 }
@@ -246,7 +245,6 @@ func DefaultConfig() Config {
 					DefaultMaxTokens: 4096,
 				},
 				Routing: RoutingConfig{
-					Default: "codex",
 					Patterns: map[string][]string{},
 					Aliases:  map[string]string{},
 				},

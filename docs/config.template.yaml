@@ -32,7 +32,7 @@ proxy:
   api_key: ""
   allow_any_key: false
   allow_refresh: false
-  model: gpt-5.2-codex           # default model (backward compat)
+  model: gpt-5.2-codex           # default model
   base_url: https://chatgpt.com/backend-api/codex  # default base URL
   
   # Multi-model support: list available models
@@ -124,7 +124,6 @@ proxy:
       #       display_name: "Mixtral 8x7B"
     
     routing:
-      default: codex  # fallback backend when no pattern matches
       patterns:
         anthropic:
           - claude-

@@ -13,14 +13,12 @@ import (
 
 	"godex/pkg/admin"
 	"godex/pkg/auth"
-	"godex/pkg/client"
 	"godex/pkg/config"
 	"godex/pkg/harness"
 	"godex/pkg/metrics"
 	"godex/pkg/payments"
 	"godex/pkg/protocol"
 	"godex/pkg/router"
-	"godex/pkg/sse"
 )
 
 var errNoFlusher = errors.New("response writer does not support flushing")
@@ -34,6 +32,7 @@ type ModelEntry struct {
 // Config controls proxy behavior.
 type Config struct {
 	Listen          string
+	Version         string
 	APIKey          string
 	Model           string
 	Models          []ModelEntry
@@ -99,7 +98,6 @@ type AnthropicBackendConfig struct {
 
 // RoutingConfig configures model-to-backend routing.
 type RoutingConfig struct {
-	Default  string
 	Patterns map[string][]string
 	Aliases  map[string]string
 }
@@ -259,23 +257,6 @@ func Run(cfg Config) error {
 	return server.ListenAndServe()
 }
 
-func (s *Server) clientForSession(sessionID string) *client.Client {
-	return s.clientForSessionWithBaseURL(sessionID, s.cfg.BaseURL)
-}
-
-func (s *Server) clientForSessionWithBaseURL(sessionID string, baseURL string) *client.Client {
-	if baseURL == "" {
-		baseURL = s.cfg.BaseURL
-	}
-	return client.New(s.httpClient, s.authStore, client.Config{
-		BaseURL:      baseURL,
-		Originator:   s.cfg.Originator,
-		UserAgent:    s.cfg.UserAgent,
-		SessionID:    sessionID,
-		AllowRefresh: s.cfg.AllowRefresh,
-	})
-}
-
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	key, ok := s.requireAuth(w, r)
@@ -393,15 +374,14 @@ func (s *Server) resolveModel(model string) (ModelEntry, bool) {
 		model = s.harnessRouter.ExpandAlias(model)
 	}
 	if m, ok := s.models[model]; ok {
+		if s.harnessRouter == nil || s.harnessRouter.HarnessFor(model) == nil {
+			return ModelEntry{}, false
+		}
 		return m, true
 	}
 	// If harness router has a harness for this model, allow it
 	if s.harnessRouter != nil && s.harnessRouter.HarnessFor(model) != nil {
 		return ModelEntry{ID: model, BaseURL: ""}, true
-	}
-	// fallback to default if no models configured
-	if len(s.models) == 0 {
-		return ModelEntry{ID: model, BaseURL: s.cfg.BaseURL}, true
 	}
 	return ModelEntry{}, false
 }
@@ -449,24 +429,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	instructions = s.resolveInstructions(sessionKey, instructions)
 
 	tools := mapTools(req.Tools)
-	toolChoice, tools := resolveToolChoice(req.ToolChoice, tools)
+	_, tools = resolveToolChoice(req.ToolChoice, tools)
 
 	stream := false
 	if req.Stream != nil {
 		stream = *req.Stream
-	}
-
-	codexReq := protocol.ResponsesRequest{
-		Model:             req.Model,
-		Instructions:      instructions,
-		Input:             input,
-		Tools:             tools,
-		ToolChoice:        toolChoice,
-		ParallelToolCalls: boolPtrValue(req.ParallelToolCalls),
-		Store:             false,
-		Stream:            true,
-		Include:           []string{},
-		PromptCacheKey:    sessionKey,
 	}
 
 	// Try harness-based routing first
@@ -507,139 +474,8 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		s.logRequest(r, http.StatusOK, start)
 		return
 	}
-
-	// Legacy backend path
-	cl := s.clientForSessionWithBaseURL(sessionKey, modelEntry.BaseURL)
-	if !stream {
-		result, err := cl.StreamAndCollect(requestContext(r), codexReq)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, err)
-			s.logRequest(r, http.StatusBadGateway, start)
-			return
-		}
-		s.cache.SaveToolCalls(sessionKey, toolCallsFromResult(result))
-		resp := responsesResponseFromResult(req.Model, result)
-		writeJSON(w, http.StatusOK, resp)
-		s.recordUsage(r, key, http.StatusOK, nil)
-		s.logRequest(r, http.StatusOK, start)
-
-		// Audit log (non-streaming)
-		if s.audit != nil {
-			var toolNames []string
-			for _, tc := range result.ToolCalls {
-				toolNames = append(toolNames, tc.Name)
-			}
-			entry := AuditEntry{
-				KeyID:         key.ID,
-				KeyLabel:      key.Label,
-				Method:        r.Method,
-				Path:          r.URL.Path,
-				Model:         req.Model,
-				Status:        http.StatusOK,
-				ElapsedMs:     time.Since(start).Milliseconds(),
-				ToolCount:     len(req.Tools),
-				HasToolCalls:  len(result.ToolCalls) > 0,
-				ToolCallNames: toolNames,
-				OutputText:    result.Text,
-			}
-			if result.Usage != nil {
-				entry.TokensIn = result.Usage.InputTokens
-				entry.TokensOut = result.Usage.OutputTokens
-			}
-			if reqJSON, err := json.Marshal(req); err == nil {
-				entry.Request = reqJSON
-			}
-			s.audit.Log(entry)
-		}
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, errNoFlusher)
-		s.logRequest(r, http.StatusInternalServerError, start)
-		return
-	}
-
-	collector := sse.NewCollector()
-	callNames := map[string]string{}
-
-	var usage *protocol.Usage
-	err = cl.StreamResponses(requestContext(r), codexReq, func(ev sse.Event) error {
-		collector.Observe(ev.Value)
-		if ev.Value.Response != nil && ev.Value.Response.Usage != nil {
-			usage = ev.Value.Response.Usage
-		}
-		if ev.Value.Type == "response.output_item.added" && ev.Value.Item != nil {
-			if ev.Value.Item.Type == "function_call" && ev.Value.Item.CallID != "" {
-				callNames[ev.Value.Item.CallID] = ev.Value.Item.Name
-			}
-		}
-		if err := writeSSE(w, flusher, ev.Raw); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		_ = writeSSE(w, flusher, map[string]any{
-			"type":    "error",
-			"message": err.Error(),
-		})
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		flusher.Flush()
-		s.logRequest(r, http.StatusBadGateway, start)
-		return
-	}
-
-	calls := map[string]ToolCall{}
-	for callID, name := range callNames {
-		calls[callID] = ToolCall{Name: name, Arguments: collector.FunctionArgs(callID)}
-	}
-	s.cache.SaveToolCalls(sessionKey, calls)
-	_, _ = w.Write([]byte("data: [DONE]\n\n"))
-	flusher.Flush()
-	s.recordUsage(r, key, http.StatusOK, usage)
-	s.logRequest(r, http.StatusOK, start)
-
-	// Audit log
-	if s.audit != nil {
-		var toolNames []string
-		for _, name := range callNames {
-			toolNames = append(toolNames, name)
-		}
-		inputCount := 0
-		if len(req.Input) > 0 {
-			var items []json.RawMessage
-			if json.Unmarshal(req.Input, &items) == nil {
-				inputCount = len(items)
-			}
-		}
-		entry := AuditEntry{
-			KeyID:         key.ID,
-			KeyLabel:      key.Label,
-			Method:        r.Method,
-			Path:          r.URL.Path,
-			Model:         req.Model,
-			Status:        http.StatusOK,
-			ElapsedMs:     time.Since(start).Milliseconds(),
-			InputItems:    inputCount,
-			ToolCount:     len(req.Tools),
-			HasToolCalls:  len(callNames) > 0,
-			ToolCallNames: toolNames,
-			OutputText:    collector.OutputText(),
-		}
-		if usage != nil {
-			entry.TokensIn = usage.InputTokens
-			entry.TokensOut = usage.OutputTokens
-		}
-		if reqJSON, err := json.Marshal(req); err == nil {
-			entry.Request = reqJSON
-		}
-		s.audit.Log(entry)
-	}
+	writeError(w, http.StatusBadRequest, fmt.Errorf("model %q not available", req.Model))
+	s.logRequest(r, http.StatusBadRequest, start)
 }
 
 func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (*KeyRecord, bool) {
@@ -701,42 +537,6 @@ func (s *Server) resolveInstructions(sessionKey, instructions string) string {
 	}
 	s.cache.SaveInstructions(sessionKey, instructions)
 	return instructions
-}
-
-func responsesResponseFromResult(model string, result client.StreamResult) OpenAIResponsesResponse {
-	resp := OpenAIResponsesResponse{
-		ID:     newResponseID("resp"),
-		Object: "response",
-		Model:  model,
-		Output: []OpenAIRespItem{},
-	}
-	if strings.TrimSpace(result.Text) != "" {
-		resp.Output = append(resp.Output, OpenAIRespItem{
-			Type: "message",
-			Role: "assistant",
-			Content: []OpenAIRespContent{{
-				Type: "output_text",
-				Text: result.Text,
-			}},
-		})
-	}
-	for _, call := range result.ToolCalls {
-		resp.Output = append(resp.Output, OpenAIRespItem{
-			Type:      "function_call",
-			Name:      call.Name,
-			CallID:    call.CallID,
-			Arguments: call.Arguments,
-		})
-	}
-	return resp
-}
-
-func toolCallsFromResult(result client.StreamResult) map[string]ToolCall {
-	calls := map[string]ToolCall{}
-	for _, call := range result.ToolCalls {
-		calls[call.CallID] = ToolCall{Name: call.Name, Arguments: call.Arguments}
-	}
-	return calls
 }
 
 func readJSON(r *http.Request, out any) error {
@@ -825,7 +625,14 @@ func (s *Server) ServeWithContext(ctx context.Context) error {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	version := s.cfg.Version
+	if strings.TrimSpace(version) == "" {
+		version = "dev"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"version": version,
+	})
 	s.logRequest(r, http.StatusOK, start)
 }
 

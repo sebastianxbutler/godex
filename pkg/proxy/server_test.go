@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,12 +31,22 @@ func TestRequireAuthMissingKey(t *testing.T) {
 }
 
 func TestHealthEndpoint(t *testing.T) {
-	s := &Server{cfg: Config{}}
+	s := &Server{cfg: Config{Version: "v1.2.3"}}
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	s.handleHealth(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("expected status=ok, got %q", body["status"])
+	}
+	if body["version"] != "v1.2.3" {
+		t.Fatalf("expected version v1.2.3, got %q", body["version"])
 	}
 }
 

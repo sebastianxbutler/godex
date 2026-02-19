@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"godex/pkg/auth"
-	"godex/pkg/client"
+	harnessCodex "godex/pkg/harness/codex"
 	"godex/pkg/protocol"
 )
 
 type staticHandler struct{}
 
-func (staticHandler) Handle(ctx context.Context, call client.ToolCall) (string, error) {
+func (staticHandler) Handle(ctx context.Context, call harnessCodex.ToolCall) (string, error) {
 	switch call.Name {
 	case "add":
 		return "5", nil
@@ -47,11 +47,11 @@ func main() {
 		PromptCacheKey: "tool-loop-example",
 	}
 
-	cl := client.New(nil, store, client.Config{SessionID: "tool-loop-example"})
+	cl := harnessCodex.NewClient(nil, store, harnessCodex.ClientConfig{SessionID: "tool-loop-example"})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	res, err := cl.RunToolLoop(ctx, req, staticHandler{}, client.ToolLoopOptions{MaxSteps: 2})
+	res, err := cl.RunToolLoop(ctx, req, staticHandler{}, harnessCodex.ToolLoopOptions{MaxSteps: 2})
 	if err != nil {
 		panic(err)
 	}

@@ -142,8 +142,8 @@ func TestHarnessFor_NoMatch(t *testing.T) {
 	r.Register("codex", codex)
 
 	h := r.HarnessFor("unknown-model-xyz")
-	if h == nil || h.Name() != "codex" {
-		t.Errorf("expected fallback to first harness, got %v", h)
+	if h != nil {
+		t.Errorf("expected nil for unknown model, got %v", h.Name())
 	}
 }
 

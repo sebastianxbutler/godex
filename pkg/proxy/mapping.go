@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"godex/pkg/protocol"
+	schemanorm "godex/pkg/schema"
 )
 
 func parseOpenAIInput(raw json.RawMessage) ([]OpenAIItem, error) {
@@ -158,12 +159,13 @@ func mapTools(tools []OpenAITool) []protocol.ToolSpec {
 			if fn == nil {
 				continue
 			}
+			params, strict := normalizeFunctionSchemaForStrict(fn.Parameters, fn.Strict)
 			out = append(out, protocol.ToolSpec{
 				Type:        "function",
 				Name:        fn.Name,
 				Description: fn.Description,
-				Parameters:  fn.Parameters,
-				Strict:      false,
+				Parameters:  params,
+				Strict:      strict,
 			})
 		case "web_search":
 			out = append(out, protocol.ToolSpec{Type: "web_search", ExternalWebAccess: true})
@@ -183,18 +185,54 @@ func mapChatTools(tools []OpenAIChatTool) []protocol.ToolSpec {
 			if tool.Function == nil {
 				continue
 			}
+			params, strict := normalizeFunctionSchemaForStrict(tool.Function.Parameters, tool.Function.Strict)
 			out = append(out, protocol.ToolSpec{
 				Type:        "function",
 				Name:        tool.Function.Name,
 				Description: tool.Function.Description,
-				Parameters:  tool.Function.Parameters,
-				Strict:      false,
+				Parameters:  params,
+				Strict:      strict,
 			})
 		case "web_search":
 			out = append(out, protocol.ToolSpec{Type: "web_search", ExternalWebAccess: true})
 		}
 	}
 	return out
+}
+
+func normalizeFunctionSchemaForStrict(parameters json.RawMessage, explicitStrict *bool) (json.RawMessage, bool) {
+	// Force strict mode for function tools when we can normalize the schema.
+	// Some clients send strict=false by default, which leads to frequent empty
+	// tool-call arguments in model output.
+	_ = explicitStrict
+	if len(parameters) == 0 {
+		return parameters, false
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(parameters, &schema); err != nil {
+		return parameters, false
+	}
+	typ, _ := schema["type"].(string)
+	if typ == "" && (schema["properties"] != nil || schema["required"] != nil) {
+		schema["type"] = "object"
+		typ = "object"
+	}
+	if typ != "object" {
+		return parameters, false
+	}
+
+	// Strict function schemas require a closed root object.
+	if _, ok := schema["additionalProperties"]; !ok {
+		schema["additionalProperties"] = false
+	}
+	schemanorm.NormalizeStrictSchemaNode(schema)
+
+	normalized, err := json.Marshal(schema)
+	if err != nil {
+		return parameters, false
+	}
+	return normalized, true
 }
 
 func resolveToolChoice(choice any, tools []protocol.ToolSpec) (string, []protocol.ToolSpec) {

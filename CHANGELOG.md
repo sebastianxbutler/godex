@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0 - 2026-02-19
+### Changed
+- **Proxy is now harness-only**: Removed legacy Codex fallback execution paths in `/v1/responses` and `/v1/chat/completions`. Requests now run through harness routing exclusively.
+- **Strict model validation**: Unknown or unroutable models are now rejected consistently with `400 model "<id>" not available` instead of drifting into downstream routing failures.
+- **Routing behavior tightened**: Router no longer falls back to the first registered harness when no model/pattern matches.
+
+### Removed
+- **Deprecated client shim package**: Removed `pkg/client` backward-compat layer and migrated examples to `pkg/harness/codex`.
+- **Unused/dead code**: Removed obsolete helpers and handlers in CLI/proxy codepaths (including unused compatibility scaffolding).
+- **No-op CLI flag**: Removed `godex exec --image` (was accepted but ignored).
+- **Stale refactor doc**: Removed `docs/HARNESS-REFACTOR-PLAN.md`.
+
+### Fixed
+- **Shared strict schema normalization**: Consolidated strict function-schema normalization into `pkg/schema` and reused it across proxy mapping and Codex harness request building to prevent drift.
+- **Tool-call argument promotion**: Improved function-call argument handling by preferring richer done-event snapshots over placeholder `{}` payloads in affected streams.
+
+## 0.8.14 - 2026-02-19
+### Fixed
+- **Tool-call argument promotion on done events**: Codex harness now prefers `function_call_arguments.done` / `output_item.done` snapshot arguments when collected args are a placeholder `{}` from earlier events. This prevents `exec` calls from being emitted downstream with empty arguments when richer done payloads are present.
+
 ## 0.8.5 - 2026-02-18
 ### Fixed
 - **OpenClaw assistant-history stalls via godex proxy**: Harness request builders now encode prior assistant text messages as `output_text` (not `input_text`) for Responses API compatibility, preventing upstream 400 errors and empty assistant turns.

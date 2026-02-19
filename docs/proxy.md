@@ -167,7 +167,6 @@ proxy:
       credentials_path: ""
       default_max_tokens: 4096
     routing:
-      default: "codex"  # fallback for unknown models
       patterns:
         anthropic: ["claude-", "sonnet", "opus", "haiku"]
         codex: ["gpt-", "o1-", "o3-", "codex-"]
@@ -181,7 +180,7 @@ proxy:
 
 1. **Model alias expansion**: `sonnet` → `claude-sonnet-4-5-20250929`
 2. **Pattern matching**: `claude-*` → Anthropic backend
-3. **Fallback**: Unknown models go to default backend
+3. **Validation**: Unknown models are rejected with `400 model "<id>" not available`
 
 ### Anthropic backend
 
@@ -261,8 +260,8 @@ proxy:
 
 > **Note:** Custom backends that fail to initialize (e.g., `key_env` is unset
 > and no `X-Provider-Key` header is provided) are **skipped with a warning**
-> rather than crashing the proxy.  Requests to those backends will fall through
-> to the default backend.
+> rather than crashing the proxy. Requests targeting unroutable models are
+> rejected with `400 model "<id>" not available`.
 
 ### Auth types
 

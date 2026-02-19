@@ -26,6 +26,7 @@ type OpenAITool struct {
 	Name        string          `json:"name,omitempty"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 // ResolvedFunction returns the function spec, handling both flat (Responses API)
@@ -40,6 +41,7 @@ func (t OpenAITool) ResolvedFunction() *OpenAIFunction {
 			Name:        t.Name,
 			Description: t.Description,
 			Parameters:  t.Parameters,
+			Strict:      t.Strict,
 		}
 	}
 	return nil
@@ -49,6 +51,7 @@ type OpenAIFunction struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 type OpenAIItem struct {

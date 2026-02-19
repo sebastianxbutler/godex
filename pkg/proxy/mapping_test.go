@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -124,5 +125,181 @@ func TestBuildSystemAndInput_MissingCallID(t *testing.T) {
 
 	if err.Error() != "function_call_output missing call_id" {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestMapTools_FunctionStrictDefaultsTrue(t *testing.T) {
+	tools := []OpenAITool{{
+		Type: "function",
+		Name: "exec",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"required":["command"],
+			"properties":{"command":{"type":"string"}}
+		}`),
+	}}
+	got := mapTools(tools)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(got))
+	}
+	if !got[0].Strict {
+		t.Fatalf("expected strict=true by default")
+	}
+}
+
+func TestMapTools_FunctionStrictFalseHintStillNormalizesToStrict(t *testing.T) {
+	disabled := false
+	tools := []OpenAITool{{
+		Type: "function",
+		Name: "exec",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"required":["command"],
+			"properties":{"command":{"type":"string"}}
+		}`),
+		Strict: &disabled,
+	}}
+	got := mapTools(tools)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(got))
+	}
+	if !got[0].Strict {
+		t.Fatalf("expected strict=true even when client hints strict=false")
+	}
+}
+
+func TestMapTools_StrictAddsRootAdditionalPropertiesFalse(t *testing.T) {
+	tools := []OpenAITool{{
+		Type: "function",
+		Name: "read",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"required":["path"],
+			"properties":{"path":{"type":"string"}}
+		}`),
+	}}
+	got := mapTools(tools)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(got))
+	}
+	if !got[0].Strict {
+		t.Fatalf("expected strict=true")
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(got[0].Parameters, &schema); err != nil {
+		t.Fatalf("invalid mapped schema: %v", err)
+	}
+	if ap, ok := schema["additionalProperties"].(bool); !ok || ap {
+		t.Fatalf("expected additionalProperties=false, got %#v", schema["additionalProperties"])
+	}
+}
+
+func TestMapTools_StrictInfersObjectType(t *testing.T) {
+	tools := []OpenAITool{{
+		Type: "function",
+		Name: "read",
+		Parameters: json.RawMessage(`{
+			"required":["path"],
+			"properties":{"path":{"type":"string"}}
+		}`),
+	}}
+	got := mapTools(tools)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(got))
+	}
+	if !got[0].Strict {
+		t.Fatalf("expected strict=true")
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(got[0].Parameters, &schema); err != nil {
+		t.Fatalf("invalid mapped schema: %v", err)
+	}
+	if typ, _ := schema["type"].(string); typ != "object" {
+		t.Fatalf("expected type=object, got %#v", schema["type"])
+	}
+	if ap, ok := schema["additionalProperties"].(bool); !ok || ap {
+		t.Fatalf("expected additionalProperties=false, got %#v", schema["additionalProperties"])
+	}
+}
+
+func TestMapTools_StrictNormalizesRequiredAndOptional(t *testing.T) {
+	tools := []OpenAITool{{
+		Type: "function",
+		Name: "read",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"required":["path"],
+			"properties":{
+				"path":{"type":"string"},
+				"offset":{"type":"number"},
+				"limit":{"type":"number"}
+			}
+		}`),
+	}}
+	got := mapTools(tools)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(got))
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(got[0].Parameters, &schema); err != nil {
+		t.Fatalf("invalid mapped schema: %v", err)
+	}
+	reqRaw, ok := schema["required"].([]any)
+	if !ok {
+		t.Fatalf("required missing or wrong type: %#v", schema["required"])
+	}
+	reqSet := map[string]bool{}
+	for _, v := range reqRaw {
+		if s, ok := v.(string); ok {
+			reqSet[s] = true
+		}
+	}
+	for _, k := range []string{"path", "offset", "limit"} {
+		if !reqSet[k] {
+			t.Fatalf("expected %q in required, got %#v", k, reqRaw)
+		}
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties missing: %#v", schema["properties"])
+	}
+	offset, ok := props["offset"].(map[string]any)
+	if !ok {
+		t.Fatalf("offset schema missing")
+	}
+	types, ok := offset["type"].([]any)
+	if !ok || len(types) != 2 {
+		t.Fatalf("expected nullable offset type, got %#v", offset["type"])
+	}
+}
+
+func TestMapTools_StrictNormalizesNestedObjectInUnion(t *testing.T) {
+	tools := []OpenAITool{{
+		Type: "function",
+		Name: "exec",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"required":["command"],
+			"properties":{
+				"command":{"type":"string"},
+				"env":{
+					"type":["object","null"],
+					"properties":{"FOO":{"type":"string"}}
+				}
+			}
+		}`),
+	}}
+	got := mapTools(tools)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(got))
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(got[0].Parameters, &schema); err != nil {
+		t.Fatalf("invalid mapped schema: %v", err)
+	}
+	props := schema["properties"].(map[string]any)
+	env := props["env"].(map[string]any)
+	if ap, ok := env["additionalProperties"].(bool); !ok || ap {
+		t.Fatalf("expected nested additionalProperties=false, got %#v", env["additionalProperties"])
 	}
 }

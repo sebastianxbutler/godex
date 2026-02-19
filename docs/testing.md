@@ -89,7 +89,7 @@ In Chrysalis, these logs are used to validate:
 | Package | Target | Current |
 |---------|--------|---------|
 | pkg/admin | 70%+ | 75.9% |
-| pkg/client | 70%+ | 75.6% |
+| pkg/harness/codex | 70%+ | see `go test -cover ./pkg/harness/codex/...` |
 | pkg/sse | 70%+ | 74.6% |
 | pkg/config | 50%+ | 55.0% |
 | pkg/harness | 50%+ | 45.8% |

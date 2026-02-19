@@ -5,27 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"godex/pkg/client"
 	"godex/pkg/harness"
 )
-
-type staticToolHandler struct {
-	outputs map[string]string
-}
-
-func (h staticToolHandler) Handle(ctx context.Context, call client.ToolCall) (string, error) {
-	if h.outputs == nil {
-		return "", fmt.Errorf("no outputs configured")
-	}
-	val, ok := h.outputs[call.Name]
-	if !ok {
-		return "", fmt.Errorf("no output configured for %s", call.Name)
-	}
-	if val == "$args" {
-		return call.Arguments, nil
-	}
-	return val, nil
-}
 
 // execToolHandler implements harness.ToolHandler for godex exec with static outputs.
 type execToolHandler struct {

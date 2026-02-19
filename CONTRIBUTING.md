@@ -14,7 +14,7 @@ cmd/godex/         CLI entrypoints
 pkg/auth/          auth loader + refresh flow
 pkg/protocol/      request/response types
 pkg/sse/           SSE parsing
-pkg/client/        streaming + tool loop helpers
+pkg/harness/codex/ Codex client + streaming + tool loop helpers
 ```
 
 ## Development workflow

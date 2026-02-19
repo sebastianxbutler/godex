@@ -1,6 +1,5 @@
 // Package proxy: harness_bridge translates between harness.Event and the
-// SSE/JSON wire formats consumed by proxy clients. This preserves backward
-// compatibility with existing API consumers while routing through harnesses.
+// SSE/JSON wire formats consumed by proxy clients.
 package proxy
 
 import (
@@ -32,8 +31,6 @@ func (s *Server) harnessResponsesStream(
 	responseID := newResponseID("resp")
 	// itemIndex tracks output item indices for SSE
 	itemIndex := 0
-	// callIndex maps callID to item index
-	callIndex := map[string]int{}
 	// Track tool calls for cache
 	toolCalls := map[string]ToolCall{}
 	var outputText string
@@ -66,12 +63,12 @@ func (s *Server) harnessResponsesStream(
 			if !textItemStarted {
 				textItemStarted = true
 				addedEvt := map[string]any{
-					"type":       "response.output_item.added",
+					"type":         "response.output_item.added",
 					"output_index": itemIndex,
 					"item": map[string]any{
-						"id":   fmt.Sprintf("msg_%d", itemIndex),
-						"type": "message",
-						"role": "assistant",
+						"id":      fmt.Sprintf("msg_%d", itemIndex),
+						"type":    "message",
+						"role":    "assistant",
 						"content": []any{},
 					},
 				}
@@ -112,7 +109,6 @@ func (s *Server) harnessResponsesStream(
 				textItemStarted = false
 			}
 			idx := itemIndex
-			callIndex[tc.CallID] = idx
 			toolCalls[tc.CallID] = ToolCall{Name: tc.Name, Arguments: tc.Arguments}
 			itemIndex++
 
@@ -125,6 +121,9 @@ func (s *Server) harnessResponsesStream(
 					"type":    "function_call",
 					"call_id": tc.CallID,
 					"name":    tc.Name,
+					// Include arguments on added for clients that execute tool calls
+					// immediately on output_item.added without waiting for done.
+					"arguments": tc.Arguments,
 				},
 			}
 			if err := writeSSE(w, flusher, addedEvt); err != nil {
@@ -225,12 +224,10 @@ func (s *Server) harnessResponsesStream(
 			return writeSSE(w, flusher, completed)
 
 		case harness.EventThinking:
-			// Thinking events don't have a direct SSE equivalent in the Codex format.
-			// We could emit them as a custom event type, but for backward compat we skip.
+			// Thinking events don't currently have an OpenAI wire equivalent.
 
 		case harness.EventPlanUpdate:
-			// Plan updates are Codex-specific. We could re-emit them as tool calls
-			// but the harness already handles this internally. Skip for SSE.
+			// Plan updates are harness-internal and are not emitted over proxy SSE.
 		}
 		return nil
 	})

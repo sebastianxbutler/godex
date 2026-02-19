@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"godex/pkg/harness"
@@ -201,6 +202,144 @@ func TestBuildRequest_ModelOverride(t *testing.T) {
 	}
 	if req.Model != "o3" {
 		t.Errorf("expected o3, got %s", req.Model)
+	}
+}
+
+func TestBuildRequest_UserToolsAreStrict(t *testing.T) {
+	h := &Harness{defaultModel: "gpt-5.2-codex"}
+	turn := &harness.Turn{
+		Tools: []harness.ToolSpec{{
+			Name:        "exec",
+			Description: "Run command",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"command"},
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string"},
+				},
+			},
+		}},
+	}
+	req, err := h.buildRequest(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+	if !req.Tools[0].Strict {
+		t.Fatal("expected custom function tools to be strict")
+	}
+	if !strings.Contains(string(req.Tools[0].Parameters), `"additionalProperties":false`) {
+		t.Fatalf("expected strict schema to include additionalProperties=false, got: %s", string(req.Tools[0].Parameters))
+	}
+}
+
+func TestBuildRequest_UserToolsInferObjectTypeForStrict(t *testing.T) {
+	h := &Harness{defaultModel: "gpt-5.2-codex"}
+	turn := &harness.Turn{
+		Tools: []harness.ToolSpec{{
+			Name: "read",
+			Parameters: map[string]any{
+				"required": []string{"path"},
+				"properties": map[string]any{
+					"path": map[string]any{"type": "string"},
+				},
+			},
+		}},
+	}
+	req, err := h.buildRequest(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+	raw := string(req.Tools[0].Parameters)
+	if !strings.Contains(raw, `"type":"object"`) {
+		t.Fatalf("expected inferred type=object in schema, got: %s", raw)
+	}
+	if !strings.Contains(raw, `"additionalProperties":false`) {
+		t.Fatalf("expected additionalProperties=false, got: %s", raw)
+	}
+}
+
+func TestBuildRequest_UserToolsStrictNormalizesRequired(t *testing.T) {
+	h := &Harness{defaultModel: "gpt-5.2-codex"}
+	turn := &harness.Turn{
+		Tools: []harness.ToolSpec{{
+			Name: "read",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"path"},
+				"properties": map[string]any{
+					"path":   map[string]any{"type": "string"},
+					"offset": map[string]any{"type": "number"},
+					"limit":  map[string]any{"type": "number"},
+				},
+			},
+		}},
+	}
+	req, err := h.buildRequest(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(req.Tools[0].Parameters, &schema); err != nil {
+		t.Fatalf("invalid schema: %v", err)
+	}
+	rawReq, ok := schema["required"].([]any)
+	if !ok {
+		t.Fatalf("required missing: %#v", schema["required"])
+	}
+	reqSet := map[string]bool{}
+	for _, v := range rawReq {
+		if s, ok := v.(string); ok {
+			reqSet[s] = true
+		}
+	}
+	for _, k := range []string{"path", "offset", "limit"} {
+		if !reqSet[k] {
+			t.Fatalf("required missing %s: %#v", k, rawReq)
+		}
+	}
+}
+
+func TestBuildRequest_UserToolsStrictNormalizesNestedObjectInUnion(t *testing.T) {
+	h := &Harness{defaultModel: "gpt-5.2-codex"}
+	turn := &harness.Turn{
+		Tools: []harness.ToolSpec{{
+			Name: "exec",
+			Parameters: map[string]any{
+				"type":     "object",
+				"required": []string{"command"},
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string"},
+					"env": map[string]any{
+						"type": []any{"object", "null"},
+						"properties": map[string]any{
+							"FOO": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+		}},
+	}
+	req, err := h.buildRequest(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(req.Tools[0].Parameters, &schema); err != nil {
+		t.Fatalf("invalid schema: %v", err)
+	}
+	props := schema["properties"].(map[string]any)
+	env := props["env"].(map[string]any)
+	if ap, ok := env["additionalProperties"].(bool); !ok || ap {
+		t.Fatalf("expected nested additionalProperties=false, got %#v", env["additionalProperties"])
 	}
 }
 

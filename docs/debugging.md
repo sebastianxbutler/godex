@@ -111,3 +111,17 @@ If `/v1/models` is missing expected models:
 - Try `--allow-any-key` in local dev
 - Confirm credentials are accessible
 - Check backend status: `curl /health`
+
+## Replay a failing `/v1/responses` request
+When debugging tool-call argument issues, replay the exact audited request directly
+to the proxy (without involving OpenClaw):
+
+```bash
+scripts/replay-audit-responses.sh --ts 2026-02-18T23:45:45.237114272Z
+```
+
+What it does:
+- extracts `.request` from `~/.godex/audit.jsonl` for the timestamp
+- POSTs it to `http://127.0.0.1:39001/v1/responses`
+- prints tool-call SSE contract events
+- fails if `exec` has empty `{}` arguments in `function_call_arguments.done` or `output_item.done`

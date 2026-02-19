@@ -9,19 +9,14 @@ cmd/godex/              CLI entrypoints (exec, proxy)
 pkg/auth/               auth.json loader + refresh handling
 pkg/protocol/           request/response types + tool schema
 pkg/sse/                SSE parser + collector
-pkg/client/             streaming + tool loop helpers (legacy)
 pkg/harness/            Backend interface + router + generic tool loop
 pkg/harness/backend.go  Backend interface definition
 pkg/harness/toolloop.go Generic RunToolLoop (works with any Backend)
 pkg/harness/context.go  WithProviderKey / ProviderKey context helpers
-pkg/harness/codex/      Codex/ChatGPT backend
+pkg/harness/codex/      Codex/ChatGPT backend + client/tool loop
 pkg/harness/claude/  Anthropic Messages API backend
 pkg/harness/openai/    Generic OpenAI-compatible backend (Gemini, Groq, etc.)
 ```
-
-> **Note:** The OpenAI-compatible backend package was renamed from
-> `pkg/harness/openai/` to `pkg/harness/openai/` to better reflect that it
-> implements the OpenAI *wire format* (not the OpenAI service specifically).
 
 ## Data flow (exec)
 
@@ -37,7 +32,7 @@ pkg/harness/openai/    Generic OpenAI-compatible backend (Gemini, Groq, etc.)
 
 | Model pattern | Backend | Notes |
 |---------------|---------|-------|
-| `gpt-*`, `o1-*`, `o3-*`, `codex-*` | Codex | Default fallback |
+| `gpt-*`, `o1-*`, `o3-*`, `codex-*` | Codex | Default route when no custom override matches |
 | `claude-*`, `sonnet`, `opus`, `haiku` | Anthropic | OAuth via Claude Code |
 | `gemini-*`, `gemini`, `flash` | Gemini (OpenAPI) | Requires `GEMINI_API_KEY` or `--provider-key` |
 | Custom patterns from config | Custom OpenAPI backend | Skipped if auth missing |
@@ -136,7 +131,7 @@ type Backend interface {
 - Model prefix matching: `claude-*` → Anthropic, `gpt-*` → Codex, `gemini-*` → Gemini
 - Aliases: `sonnet` → `claude-sonnet-4-5-20250929`, `gemini` → `gemini-2.5-pro`, `flash` → `gemini-2.5-flash`
 - Custom backend patterns read from config (`routing.patterns`)
-- Fallback to default backend for unknown models
+- Unknown models are rejected with a `400` validation error
 
 ### Anthropic backend
 

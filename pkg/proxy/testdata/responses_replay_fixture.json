@@ -1,0 +1,93 @@
+{
+  "model": "gpt-5.3-codex",
+  "stream": true,
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "max_output_tokens": 8192,
+  "input": [
+    {
+      "type": "message",
+      "role": "system",
+      "content": "You are a personal assistant running inside OpenClaw."
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Can you try calling ls in your current directory?"
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_prev_exec",
+      "name": "exec",
+      "arguments": "{}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_prev_exec",
+      "output": "Validation failed for tool \"exec\": command is required"
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Great. Retry now with the proper command."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "exec",
+      "description": "Execute shell commands with background continuation.",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "workdir": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "type": "string"
+              }
+            }
+          },
+          "yieldMs": {
+            "type": "number"
+          },
+          "background": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "type": "number"
+          },
+          "pty": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "session_status",
+      "description": "Show a status card.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sessionKey": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "strict": false
+    }
+  ]
+}

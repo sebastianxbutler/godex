@@ -23,7 +23,6 @@ Config:
 - `--append-system-prompt <text>` — appended system prompt
 - `--native-tools` — use Codex native tools (shell, apply_patch, update_plan) instead of proxy mode
 - `--session-id <id>` — optional session identifier
-- `--image <path>` — attach image to the prompt
 - `--web-search` — enable `web_search` tool
 - `--tool <name:spec>` — add a tool schema (see below)
 - `--auto-tools` — run tool loop automatically
