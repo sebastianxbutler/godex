@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"godex/pkg/auth"
@@ -21,21 +22,25 @@ const defaultBaseURL = "https://chatgpt.com/backend-api/codex"
 
 // ClientConfig holds configuration for the Codex client.
 type ClientConfig struct {
-	BaseURL      string
-	Originator   string
-	UserAgent    string
-	SessionID    string
-	AllowRefresh bool
-	RetryMax     int
-	RetryDelay   time.Duration
+	BaseURL           string
+	Originator        string
+	UserAgent         string
+	SessionID         string
+	AllowRefresh      bool
+	RetryMax          int
+	RetryDelay        time.Duration
+	UpstreamAuditPath string
 }
 
 // Client implements the Codex/ChatGPT API client directly.
 type Client struct {
-	httpClient *http.Client
-	auth       *auth.Store
-	cfg        ClientConfig
+	httpClient    *http.Client
+	auth          *auth.Store
+	cfg           ClientConfig
+	upstreamAudit *upstreamAuditLogger
 }
+
+var requestCounter uint64
 
 // NewClient creates a new Codex API client.
 func NewClient(httpClient *http.Client, authStore *auth.Store, cfg ClientConfig) *Client {
@@ -57,7 +62,15 @@ func NewClient(httpClient *http.Client, authStore *auth.Store, cfg ClientConfig)
 	if cfg.RetryDelay == 0 {
 		cfg.RetryDelay = 300 * time.Millisecond
 	}
-	return &Client{httpClient: httpClient, auth: authStore, cfg: cfg}
+	if strings.TrimSpace(cfg.UpstreamAuditPath) == "" {
+		cfg.UpstreamAuditPath = strings.TrimSpace(os.Getenv("GODEX_UPSTREAM_AUDIT_PATH"))
+	}
+	return &Client{
+		httpClient:    httpClient,
+		auth:          authStore,
+		cfg:           cfg,
+		upstreamAudit: newUpstreamAuditLogger(cfg.UpstreamAuditPath),
+	}
 }
 
 // WithBaseURL returns a new client with a different base URL.
@@ -65,9 +78,10 @@ func (c *Client) WithBaseURL(baseURL string) *Client {
 	newCfg := c.cfg
 	newCfg.BaseURL = baseURL
 	return &Client{
-		httpClient: c.httpClient,
-		auth:       c.auth,
-		cfg:        newCfg,
+		httpClient:    c.httpClient,
+		auth:          c.auth,
+		cfg:           newCfg,
+		upstreamAudit: c.upstreamAudit,
 	}
 }
 
@@ -81,6 +95,8 @@ func (c *Client) StreamResponses(ctx context.Context, req protocol.ResponsesRequ
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}
+	reqID := fmt.Sprintf("req_%d", atomic.AddUint64(&requestCounter, 1))
+	c.logUpstreamRequest(reqID, req.Model, payload)
 
 	refreshed := false
 	retried := 0
@@ -117,11 +133,56 @@ func (c *Client) StreamResponses(ctx context.Context, req protocol.ResponsesRequ
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+			c.logUpstreamHTTPError(reqID, req.Model, resp.StatusCode, body)
 			return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 		defer resp.Body.Close()
-		return sse.ParseStream(resp.Body, onEvent)
+		return sse.ParseStream(resp.Body, func(ev sse.Event) error {
+			c.logUpstreamEvent(reqID, req.Model, ev)
+			return onEvent(ev)
+		})
 	}
+}
+
+func (c *Client) logUpstreamRequest(reqID, model string, payload []byte) {
+	if c.upstreamAudit == nil {
+		return
+	}
+	entry := map[string]any{
+		"phase":      "request",
+		"request_id": reqID,
+		"model":      model,
+		"payload":    json.RawMessage(payload),
+	}
+	c.upstreamAudit.Log(entry)
+}
+
+func (c *Client) logUpstreamHTTPError(reqID, model string, status int, body []byte) {
+	if c.upstreamAudit == nil {
+		return
+	}
+	entry := map[string]any{
+		"phase":      "http_error",
+		"request_id": reqID,
+		"model":      model,
+		"status":     status,
+		"body":       strings.TrimSpace(string(body)),
+	}
+	c.upstreamAudit.Log(entry)
+}
+
+func (c *Client) logUpstreamEvent(reqID, model string, ev sse.Event) {
+	if c.upstreamAudit == nil {
+		return
+	}
+	entry := map[string]any{
+		"phase":      "sse_event",
+		"request_id": reqID,
+		"model":      model,
+		"event_type": ev.Value.Type,
+		"event":      json.RawMessage(ev.Raw),
+	}
+	c.upstreamAudit.Log(entry)
 }
 
 // ToolCall represents a function call from the model.

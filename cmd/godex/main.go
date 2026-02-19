@@ -113,6 +113,7 @@ func runExec(args []string) error {
 	var logRequests string
 	var logResponses string
 	var providerKey string
+	var upstreamAuditPath string
 
 	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	fs.StringVar(&prompt, "prompt", "", "User prompt")
@@ -135,6 +136,7 @@ func runExec(args []string) error {
 	fs.StringVar(&logRequests, "log-requests", "", "Write JSON request payload to file")
 	fs.StringVar(&logResponses, "log-responses", "", "Append JSONL response events to file")
 	fs.StringVar(&providerKey, "provider-key", "", "API key for non-Codex backends (or set via env per provider)")
+	fs.StringVar(&upstreamAuditPath, "upstream-audit-path", cfg.Proxy.UpstreamAuditPath, "Upstream model SSE audit JSONL path")
 	fs.BoolVar(&nativeTools, "native-tools", false, "Use Codex native tools (shell, apply_patch, update_plan) instead of proxy mode")
 
 	if err := fs.Parse(args); err != nil {
@@ -143,6 +145,9 @@ func runExec(args []string) error {
 	_ = configPath
 	if strings.TrimSpace(prompt) == "" && strings.TrimSpace(inputJSON) == "" {
 		return errors.New("--prompt is required unless --input-json is provided")
+	}
+	if strings.TrimSpace(upstreamAuditPath) != "" {
+		cfg.Proxy.UpstreamAuditPath = strings.TrimSpace(upstreamAuditPath)
 	}
 
 	if cfg.Auth.RefreshURL != "" || cfg.Auth.ClientID != "" || cfg.Auth.Scope != "" {
@@ -754,6 +759,8 @@ func runProxy(args []string) error {
 			return runProxyKeys(args[1:])
 		case "usage":
 			return runProxyUsage(args[1:])
+		case "replay":
+			return runProxyReplay(args[1:])
 		}
 	}
 
@@ -788,6 +795,10 @@ func runProxy(args []string) error {
 	var meterWindow string
 	var syncAliases bool
 	var proxyNativeTools bool
+	var tracePath string
+	var traceMaxBytes int64
+	var traceBackups int
+	var upstreamAuditPath string
 
 	configPath := fs.String("config", config.DefaultPath(), "Config file path")
 	fs.StringVar(&listen, "listen", cfg.Proxy.Listen, "Listen address")
@@ -813,6 +824,10 @@ func runProxy(args []string) error {
 	fs.StringVar(&eventsPath, "events-path", cfg.Proxy.EventsPath, "Proxy events JSONL path")
 	fs.Int64Var(&eventsMaxBytes, "events-max-bytes", cfg.Proxy.EventsMax, "Max events file size before rotation")
 	fs.IntVar(&eventsBackups, "events-max-backups", cfg.Proxy.EventsBackups, "Max rotated events files to keep")
+	fs.StringVar(&tracePath, "trace-path", cfg.Proxy.TracePath, "Deep trace JSONL path (request/response payloads)")
+	fs.Int64Var(&traceMaxBytes, "trace-max-bytes", cfg.Proxy.TraceMaxBytes, "Max trace file size before rotation")
+	fs.IntVar(&traceBackups, "trace-max-backups", cfg.Proxy.TraceBackups, "Max rotated trace files to keep")
+	fs.StringVar(&upstreamAuditPath, "upstream-audit-path", cfg.Proxy.UpstreamAuditPath, "Upstream model SSE audit JSONL path")
 	fs.StringVar(&meterWindow, "meter-window", cfg.Proxy.MeterWindow.String(), "Metering window duration (e.g. 24h); empty disables window")
 	fs.BoolVar(&syncAliases, "sync-aliases", false, "Update model aliases from providers on startup")
 	fs.BoolVar(&proxyNativeTools, "native-tools", cfg.Proxy.Backends.Codex.NativeTools, "Use Codex native tools (shell, apply_patch) instead of proxy mode")
@@ -876,6 +891,9 @@ func runProxy(args []string) error {
 		AuditPath:       cfg.Proxy.AuditPath,
 		AuditMaxBytes:   cfg.Proxy.AuditMaxBytes,
 		AuditBackups:    cfg.Proxy.AuditBackups,
+		TracePath:       tracePath,
+		TraceMaxBytes:   traceMaxBytes,
+		TraceBackups:    traceBackups,
 		MeterWindow:     window,
 		AdminSocket:     cfg.Proxy.AdminSocket,
 		Payments:        payCfg,
@@ -905,6 +923,9 @@ func runProxy(args []string) error {
 	// Apply CLI flag overrides to config
 	if proxyNativeTools {
 		cfg.Proxy.Backends.Codex.NativeTools = true
+	}
+	if strings.TrimSpace(upstreamAuditPath) != "" {
+		cfg.Proxy.UpstreamAuditPath = upstreamAuditPath
 	}
 	if syncAliases {
 		if err := syncAliasesOnStartup(cfg, *configPath, &proxyCfg); err != nil {
@@ -945,10 +966,11 @@ func buildHarnessRouter(cfg config.Config, proxyCfg proxy.Config) *router.Router
 		store, err := auth.Load(authPath)
 		if err == nil {
 			codexClient := harnessCodexP.NewClient(nil, store, harnessCodexP.ClientConfig{
-				BaseURL:      baseURL,
-				Originator:   proxyCfg.Originator,
-				UserAgent:    proxyCfg.UserAgent,
-				AllowRefresh: proxyCfg.AllowRefresh,
+				BaseURL:           baseURL,
+				Originator:        proxyCfg.Originator,
+				UserAgent:         proxyCfg.UserAgent,
+				AllowRefresh:      proxyCfg.AllowRefresh,
+				UpstreamAuditPath: cfg.Proxy.UpstreamAuditPath,
 			})
 			h := harnessCodexP.New(harnessCodexP.Config{
 				Client:        codexClient,
@@ -1690,13 +1712,14 @@ func resolveClient(model string, store *auth.Store, cfg config.Config, allowRefr
 		baseURL = "https://chatgpt.com/backend-api/codex"
 	}
 	c := harnessCodexP.NewClient(nil, store, harnessCodexP.ClientConfig{
-		SessionID:    sessionID,
-		AllowRefresh: allowRefresh,
-		BaseURL:      baseURL,
-		Originator:   cfg.Client.Originator,
-		UserAgent:    cfg.Client.UserAgent,
-		RetryMax:     cfg.Client.RetryMax,
-		RetryDelay:   cfg.Client.RetryDelay,
+		SessionID:         sessionID,
+		AllowRefresh:      allowRefresh,
+		BaseURL:           baseURL,
+		Originator:        cfg.Client.Originator,
+		UserAgent:         cfg.Client.UserAgent,
+		RetryMax:          cfg.Client.RetryMax,
+		RetryDelay:        cfg.Client.RetryDelay,
+		UpstreamAuditPath: cfg.Proxy.UpstreamAuditPath,
 	})
 	return c, nil
 }
@@ -1880,6 +1903,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "       godex proxy keys --config <path> add --label <label> [--rate 60/m] [--burst 10] [--quota-tokens N]")
 	fmt.Fprintln(os.Stderr, "       godex proxy keys list | update <id> | revoke <id|key> | rotate <id|key>")
 	fmt.Fprintln(os.Stderr, "       godex proxy usage --config <path> list [--since 24h] [--key <id>] | show <id>")
+	fmt.Fprintln(os.Stderr, "       godex proxy replay [--request-id <id>|latest] [--list N] [--trace-path path] [--audit-path path] [--url http://127.0.0.1:39001] [--api-key key]")
 	fmt.Fprintln(os.Stderr, "       godex probe <model> [--url http://127.0.0.1:39001] [--key <api-key>] [--json]")
 	fmt.Fprintln(os.Stderr, "       godex auth status | setup")
 	fmt.Fprintln(os.Stderr, "       godex aliases list | update [--dry-run]")

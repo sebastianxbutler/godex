@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 - 2026-02-19
+### Added
+- **Built-in request replay CLI**: Added `godex proxy replay` to replay previously captured OpenClaw requests directly from trace/audit logs, with request listing and payload export.
+- **First-class deep trace controls**: Added proxy config/env/CLI controls for trace logging (`trace_path`, rotation settings, and `--trace-*` flags).
+- **Upstream model audit wiring**: Added config/env/CLI support for upstream SSE audit logging (`upstream_audit_path` and `--upstream-audit-path`) across proxy and exec paths.
+
+### Changed
+- **Tracing as core feature**: Proxy-to-harness and harness-to-OpenClaw boundaries now emit structured trace records intended for production debugging and deterministic replay workflows.
+
 ## 0.9.4 - 2026-02-19
 ### Fixed
 - **Exec arg repair hardening**: Proxy now repairs `exec` tool calls whenever `command` is missing/empty (not only `{}`), and emits diagnostics for repair success/failure in proxy logs.

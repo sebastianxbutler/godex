@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -59,6 +60,9 @@ type Config struct {
 	AuditPath       string
 	AuditMaxBytes   int64
 	AuditBackups    int
+	TracePath       string
+	TraceMaxBytes   int64
+	TraceBackups    int
 	MeterWindow     time.Duration
 	AdminSocket     string
 	Payments        payments.Config
@@ -109,6 +113,7 @@ type Server struct {
 	authStore     *auth.Store
 	logger        *Logger
 	audit         *AuditLogger
+	trace         *TraceLogger
 	keys          *KeyStore
 	limiters      *LimiterStore
 	metrics       *metrics.Collector
@@ -152,6 +157,9 @@ func Run(cfg Config) error {
 	}
 	if cfg.EventsBackups == 0 {
 		cfg.EventsBackups = 3
+	}
+	if strings.TrimSpace(cfg.TracePath) == "" {
+		cfg.TracePath = strings.TrimSpace(os.Getenv("GODEX_PROXY_TRACE_PATH"))
 	}
 	if strings.TrimSpace(cfg.RateLimit) == "" {
 		cfg.RateLimit = "60/m"
@@ -221,6 +229,7 @@ func Run(cfg Config) error {
 		authStore:     store,
 		logger:        NewLogger(ParseLogLevel(cfg.LogLevel)),
 		audit:         NewAuditLogger(cfg.AuditPath, cfg.AuditMaxBytes, cfg.AuditBackups),
+		trace:         NewTraceLogger(cfg.TracePath, cfg.TraceMaxBytes, cfg.TraceBackups),
 		keys:          keys,
 		limiters:      limiters,
 		usage:         usage,
@@ -388,15 +397,21 @@ func (s *Server) resolveModel(model string) (ModelEntry, bool) {
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	requestID := newResponseID("pxreq")
 	var req OpenAIResponsesRequest
 	if err := readJSON(r, &req); err != nil {
+		s.traceMessage(requestID, "proxy", "in", "/v1/responses", "openclaw_request_decode_error", err.Error())
 		writeError(w, http.StatusBadRequest, err)
 		s.logRequest(r, http.StatusBadRequest, start)
 		return
 	}
+	if raw, err := json.Marshal(req); err == nil {
+		s.tracePayload(requestID, "proxy", "in", "/v1/responses", "openclaw_request", json.RawMessage(raw))
+	}
 	modelEntry, ok := s.resolveModel(req.Model)
 	if !ok {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("model %q not available", req.Model))
+		s.traceMessage(requestID, "proxy", "out", "/v1/responses", "model_unavailable", req.Model)
 		s.logRequest(r, http.StatusBadRequest, start)
 		return
 	}
@@ -415,6 +430,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	sessionKey := s.sessionKey(req.User, r)
 	items, err := parseOpenAIInput(req.Input)
 	if err != nil {
+		s.traceMessage(requestID, "proxy", "in", "/v1/responses", "parse_input_error", err.Error())
 		writeError(w, http.StatusBadRequest, err)
 		s.logRequest(r, http.StatusBadRequest, start)
 		return
@@ -424,6 +440,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		stream = *req.Stream
 	}
 	if badPairs := countInvalidExecPairs(items); badPairs > 0 {
+		s.traceMessage(requestID, "proxy", "in", "/v1/responses", "drop_invalid_exec_pairs", fmt.Sprintf("count=%d", badPairs))
 		items = dropInvalidExecPairs(items)
 	}
 	input, system, err := buildSystemAndInput(sessionKey, items, s.cache)
@@ -441,13 +458,16 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	// Try harness-based routing first
 	if h := s.harnessForModel(req.Model); h != nil {
 		turn := buildTurnFromResponses(req.Model, instructions, input, tools, nil)
+		if rawTurn, err := json.Marshal(turn); err == nil {
+			s.tracePayload(requestID, "proxy_harness", "out", "/v1/responses", "harness_turn", json.RawMessage(rawTurn))
+		}
 		var auditReqJSON json.RawMessage
 		if s.audit != nil {
 			auditReqJSON, _ = json.Marshal(req)
 		}
 
 		if !stream {
-			s.harnessResponsesNonStream(requestContext(r), w, h, turn, req.Model, key, start, auditReqJSON, sessionKey)
+			s.harnessResponsesNonStream(requestContext(r), w, h, turn, req.Model, key, start, auditReqJSON, sessionKey, requestID)
 			s.logRequest(r, http.StatusOK, start)
 			return
 		}
@@ -461,7 +481,8 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 			s.logRequest(r, http.StatusInternalServerError, start)
 			return
 		}
-		if err := s.harnessResponsesStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, auditReqJSON, sessionKey); err != nil {
+		if err := s.harnessResponsesStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, auditReqJSON, sessionKey, requestID); err != nil {
+			s.traceMessage(requestID, "proxy", "out", "/v1/responses", "stream_error", err.Error())
 			_ = writeSSE(w, flusher, map[string]any{
 				"type":    "error",
 				"message": err.Error(),

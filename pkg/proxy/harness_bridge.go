@@ -30,6 +30,7 @@ func (s *Server) harnessResponsesStream(
 	start time.Time,
 	auditReq json.RawMessage,
 	sessionKey string,
+	requestID string,
 ) error {
 	responseID := newResponseID("resp")
 	// itemIndex tracks output item indices for SSE
@@ -49,7 +50,11 @@ func (s *Server) harnessResponsesStream(
 			"model":  model,
 		},
 	}
-	if err := writeSSE(w, flusher, created); err != nil {
+	emitSSE := func(phase string, payload any) error {
+		s.tracePayload(requestID, "proxy_openclaw", "out", "/v1/responses", phase, payload)
+		return writeSSE(w, flusher, payload)
+	}
+	if err := emitSSE("sse.response.created", created); err != nil {
 		return err
 	}
 
@@ -57,6 +62,9 @@ func (s *Server) harnessResponsesStream(
 	textItemStarted := false
 
 	err := h.StreamTurn(ctx, turn, func(ev harness.Event) error {
+		if rawEv, err := json.Marshal(ev); err == nil {
+			s.tracePayload(requestID, "proxy_harness", "in", "/v1/responses", "harness.event", json.RawMessage(rawEv))
+		}
 		switch ev.Kind {
 		case harness.EventText:
 			if ev.Text == nil || ev.Text.Delta == "" {
@@ -75,7 +83,7 @@ func (s *Server) harnessResponsesStream(
 						"content": []any{},
 					},
 				}
-				if err := writeSSE(w, flusher, addedEvt); err != nil {
+				if err := emitSSE("sse.response.output_item.added.message", addedEvt); err != nil {
 					return err
 				}
 				// Content part added
@@ -88,7 +96,7 @@ func (s *Server) harnessResponsesStream(
 						"text": "",
 					},
 				}
-				if err := writeSSE(w, flusher, partEvt); err != nil {
+				if err := emitSSE("sse.response.content_part.added", partEvt); err != nil {
 					return err
 				}
 			}
@@ -99,20 +107,16 @@ func (s *Server) harnessResponsesStream(
 				"content_index": 0,
 				"delta":         ev.Text.Delta,
 			}
-			return writeSSE(w, flusher, delta)
+			return emitSSE("sse.response.output_text.delta", delta)
 
 		case harness.EventToolCall:
 			if ev.ToolCall == nil {
 				return nil
 			}
 			tc := ev.ToolCall
-			if tc.Name == "exec" && needsExecArgRepair(tc.Arguments) {
-				if repaired, ok := repairEmptyExecArgs(turn); ok {
-					log.Printf("[INFO] repaired empty/invalid exec args call_id=%s args=%s", tc.CallID, repaired)
-					tc.Arguments = repaired
-				} else {
-					log.Printf("[WARN] unable to infer exec args for call_id=%s original=%q", tc.CallID, tc.Arguments)
-				}
+			normalizeExecToolCall(turn, tc)
+			if tc.Name == "exec" {
+				log.Printf("[INFO] emitting exec tool call stream call_id=%s args=%s", tc.CallID, tc.Arguments)
 			}
 			// If we had a text item, close it and advance
 			if textItemStarted {
@@ -137,7 +141,7 @@ func (s *Server) harnessResponsesStream(
 					"arguments": tc.Arguments,
 				},
 			}
-			if err := writeSSE(w, flusher, addedEvt); err != nil {
+			if err := emitSSE("sse.response.output_item.added", addedEvt); err != nil {
 				return err
 			}
 
@@ -149,7 +153,7 @@ func (s *Server) harnessResponsesStream(
 					"item_id":      tc.CallID,
 					"delta":        tc.Arguments,
 				}
-				if err := writeSSE(w, flusher, argsDelta); err != nil {
+				if err := emitSSE("sse.response.function_call_arguments.delta", argsDelta); err != nil {
 					return err
 				}
 			}
@@ -167,7 +171,7 @@ func (s *Server) harnessResponsesStream(
 					"arguments": tc.Arguments,
 				},
 			}
-			if err := writeSSE(w, flusher, argsDone); err != nil {
+			if err := emitSSE("sse.response.function_call_arguments.done", argsDone); err != nil {
 				return err
 			}
 
@@ -183,7 +187,7 @@ func (s *Server) harnessResponsesStream(
 					"arguments": tc.Arguments,
 				},
 			}
-			return writeSSE(w, flusher, itemDone)
+			return emitSSE("sse.response.output_item.done", itemDone)
 
 		case harness.EventUsage:
 			if ev.Usage != nil {
@@ -199,7 +203,7 @@ func (s *Server) harnessResponsesStream(
 					"type":    "error",
 					"message": ev.Error.Message,
 				}
-				return writeSSE(w, flusher, errEvt)
+				return emitSSE("sse.error", errEvt)
 			}
 
 		case harness.EventDone:
@@ -211,7 +215,7 @@ func (s *Server) harnessResponsesStream(
 					"content_index": 0,
 					"text":          outputText,
 				}
-				if err := writeSSE(w, flusher, textDone); err != nil {
+				if err := emitSSE("sse.response.output_text.done", textDone); err != nil {
 					return err
 				}
 			}
@@ -232,7 +236,7 @@ func (s *Server) harnessResponsesStream(
 					"output_tokens": usage.OutputTokens,
 				}
 			}
-			return writeSSE(w, flusher, completed)
+			return emitSSE("sse.response.completed", completed)
 
 		case harness.EventThinking:
 			// Thinking events don't currently have an OpenAI wire equivalent.
@@ -293,6 +297,58 @@ func repairEmptyExecArgs(turn *harness.Turn) (string, bool) {
 		return "", false
 	}
 	return string(raw), true
+}
+
+func normalizeExecToolCall(turn *harness.Turn, tc *harness.ToolCallEvent) {
+	if tc == nil || tc.Name != "exec" {
+		return
+	}
+	tc.Arguments = sanitizeExecArgs(tc.Arguments)
+	if needsExecArgRepair(tc.Arguments) {
+		if repaired, ok := repairEmptyExecArgs(turn); ok {
+			log.Printf("[INFO] repaired empty/invalid exec args call_id=%s args=%s", tc.CallID, repaired)
+			tc.Arguments = repaired
+		} else {
+			log.Printf("[WARN] unable to infer exec args for call_id=%s original=%q", tc.CallID, tc.Arguments)
+		}
+	}
+}
+
+func sanitizeExecArgs(args string) string {
+	trimmed := strings.TrimSpace(args)
+	if trimmed == "" {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return args
+	}
+
+	sanitized := map[string]any{}
+	switch v := parsed["command"].(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			sanitized["command"] = v
+		}
+	}
+	switch v := parsed["workdir"].(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			sanitized["workdir"] = v
+		}
+	}
+	switch v := parsed["yieldMs"].(type) {
+	case float64:
+		sanitized["yieldMs"] = int(v)
+	case int:
+		sanitized["yieldMs"] = v
+	}
+
+	out, err := json.Marshal(sanitized)
+	if err != nil {
+		return args
+	}
+	return string(out)
 }
 
 func needsExecArgRepair(args string) bool {
@@ -381,9 +437,11 @@ func (s *Server) harnessResponsesNonStream(
 	start time.Time,
 	auditReq json.RawMessage,
 	sessionKey string,
+	requestID string,
 ) {
 	result, err := h.StreamAndCollect(ctx, turn)
 	if err != nil {
+		s.traceMessage(requestID, "proxy_harness", "in", "/v1/responses", "stream_and_collect_error", err.Error())
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
@@ -391,6 +449,12 @@ func (s *Server) harnessResponsesNonStream(
 	// Build tool calls cache
 	calls := map[string]ToolCall{}
 	for _, tc := range result.ToolCalls {
+		local := tc
+		normalizeExecToolCall(turn, &local)
+		tc = local
+		if tc.Name == "exec" {
+			log.Printf("[INFO] emitting exec tool call nonstream call_id=%s args=%s", tc.CallID, tc.Arguments)
+		}
 		calls[tc.CallID] = ToolCall{Name: tc.Name, Arguments: tc.Arguments}
 	}
 	s.cache.SaveToolCalls(sessionKey, calls)
@@ -413,12 +477,18 @@ func (s *Server) harnessResponsesNonStream(
 		})
 	}
 	for _, tc := range result.ToolCalls {
+		local := tc
+		normalizeExecToolCall(turn, &local)
+		tc = local
 		resp.Output = append(resp.Output, OpenAIRespItem{
 			Type:      "function_call",
 			Name:      tc.Name,
 			CallID:    tc.CallID,
 			Arguments: tc.Arguments,
 		})
+	}
+	if rawResp, err := json.Marshal(resp); err == nil {
+		s.tracePayload(requestID, "proxy_openclaw", "out", "/v1/responses", "json.response", json.RawMessage(rawResp))
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -462,6 +532,7 @@ func (s *Server) harnessChatStream(
 	key *KeyRecord,
 	start time.Time,
 	sessionKey string,
+	requestID string,
 ) error {
 	chunkID := newResponseID("chatcmpl")
 	created := time.Now().Unix()
@@ -472,6 +543,9 @@ func (s *Server) harnessChatStream(
 	var usage *protocol.Usage
 
 	err := h.StreamTurn(ctx, turn, func(ev harness.Event) error {
+		if rawEv, err := json.Marshal(ev); err == nil {
+			s.tracePayload(requestID, "proxy_harness", "in", "/v1/chat/completions", "harness.event", json.RawMessage(rawEv))
+		}
 		switch ev.Kind {
 		case harness.EventText:
 			if ev.Text == nil || ev.Text.Delta == "" {
@@ -491,6 +565,7 @@ func (s *Server) harnessChatStream(
 				chunk.Choices[0].Delta.Role = "assistant"
 				sentRole = true
 			}
+			s.tracePayload(requestID, "proxy_openclaw", "out", "/v1/chat/completions", "sse.chat.delta", chunk)
 			return writeSSE(w, flusher, chunk)
 
 		case harness.EventToolCall:
@@ -498,6 +573,10 @@ func (s *Server) harnessChatStream(
 				return nil
 			}
 			tc := ev.ToolCall
+			normalizeExecToolCall(turn, tc)
+			if tc.Name == "exec" {
+				log.Printf("[INFO] emitting exec tool call chat-stream call_id=%s args=%s", tc.CallID, tc.Arguments)
+			}
 			sawTool = true
 			info, ok := callInfoMap[tc.CallID]
 			if !ok {
@@ -527,6 +606,7 @@ func (s *Server) harnessChatStream(
 			if err := writeSSE(w, flusher, startChunk); err != nil {
 				return err
 			}
+			s.tracePayload(requestID, "proxy_openclaw", "out", "/v1/chat/completions", "sse.chat.tool_start", startChunk)
 
 			// Emit arguments
 			if tc.Arguments != "" {
@@ -547,6 +627,7 @@ func (s *Server) harnessChatStream(
 						}}},
 					}},
 				}
+				s.tracePayload(requestID, "proxy_openclaw", "out", "/v1/chat/completions", "sse.chat.tool_args", argsChunk)
 				return writeSSE(w, flusher, argsChunk)
 			}
 			return nil
@@ -587,6 +668,7 @@ func (s *Server) harnessChatStream(
 		}},
 	}
 	_ = writeSSE(w, flusher, finalChunk)
+	s.tracePayload(requestID, "proxy_openclaw", "out", "/v1/chat/completions", "sse.chat.final", finalChunk)
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	flusher.Flush()
 

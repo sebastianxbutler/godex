@@ -64,3 +64,28 @@ func TestNeedsExecArgRepair(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeExecArgs(t *testing.T) {
+	got := sanitizeExecArgs(`{"ask":"off","command":"ls /tmp","workdir":"/home/cmd/clawd","yieldMs":1000}`)
+	want := `{"command":"ls /tmp","workdir":"/home/cmd/clawd","yieldMs":1000}`
+	if got != want {
+		t.Fatalf("sanitizeExecArgs()=%s want %s", got, want)
+	}
+}
+
+func TestNormalizeExecToolCall_RepairsEmptyArgs(t *testing.T) {
+	turn := &harness.Turn{
+		Messages: []harness.Message{
+			{Role: "user", Content: `Please run the "ls /home/cmd/clawd" command.`},
+		},
+	}
+	tc := &harness.ToolCallEvent{
+		CallID:    "call_1",
+		Name:      "exec",
+		Arguments: "{}",
+	}
+	normalizeExecToolCall(turn, tc)
+	if tc.Arguments != `{"command":"ls /home/cmd/clawd"}` {
+		t.Fatalf("unexpected repaired args: %s", tc.Arguments)
+	}
+}

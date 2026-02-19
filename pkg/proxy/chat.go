@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -16,10 +17,15 @@ type chatCallInfo struct {
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	requestID := newResponseID("pxreq")
 	var req OpenAIChatRequest
 	if err := readJSON(r, &req); err != nil {
+		s.traceMessage(requestID, "proxy", "in", "/v1/chat/completions", "openclaw_request_decode_error", err.Error())
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	if rawReq, err := json.Marshal(req); err == nil {
+		s.tracePayload(requestID, "proxy", "in", "/v1/chat/completions", "openclaw_request", json.RawMessage(rawReq))
 	}
 	modelEntry, ok := s.resolveModel(req.Model)
 	if !ok {
@@ -82,9 +88,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Try harness-based routing first
 	if h := s.harnessForModel(req.Model); h != nil {
 		turn := buildTurnFromChat(req.Model, instructions, input, tools)
+		if rawTurn, err := json.Marshal(turn); err == nil {
+			s.tracePayload(requestID, "proxy_harness", "out", "/v1/chat/completions", "harness_turn", json.RawMessage(rawTurn))
+		}
 		if !req.Stream {
 			result, err := h.StreamAndCollect(requestContext(r), turn)
 			if err != nil {
+				s.traceMessage(requestID, "proxy_harness", "in", "/v1/chat/completions", "stream_and_collect_error", err.Error())
 				writeError(w, http.StatusBadGateway, err)
 				return
 			}
@@ -94,6 +104,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			s.cache.SaveToolCalls(sessionKey, calls)
 			resp := harnessResultToChatResponse(req.Model, result)
+			if rawResp, err := json.Marshal(resp); err == nil {
+				s.tracePayload(requestID, "proxy_openclaw", "out", "/v1/chat/completions", "json.response", json.RawMessage(rawResp))
+			}
 			writeJSON(w, http.StatusOK, resp)
 			s.recordUsage(r, key, http.StatusOK, nil)
 			return
@@ -107,7 +120,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, errNoFlusher)
 			return
 		}
-		if err := s.harnessChatStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, sessionKey); err != nil {
+		if err := s.harnessChatStream(requestContext(r), w, flusher, h, turn, req.Model, key, start, sessionKey, requestID); err != nil {
+			s.traceMessage(requestID, "proxy", "out", "/v1/chat/completions", "stream_error", err.Error())
 			_ = writeSSE(w, flusher, map[string]any{
 				"type":    "error",
 				"message": err.Error(),

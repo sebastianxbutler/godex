@@ -52,38 +52,42 @@ type ModelConfig struct {
 }
 
 type ProxyConfig struct {
-	Listen        string         `yaml:"listen"`
-	APIKey        string         `yaml:"api_key"`
-	AllowAnyKey   bool           `yaml:"allow_any_key"`
-	AllowRefresh  bool           `yaml:"allow_refresh"`
-	Model         string         `yaml:"model"`
-	Models        []ModelConfig  `yaml:"models"`
-	BaseURL       string         `yaml:"base_url"`
-	Originator    string         `yaml:"originator"`
-	UserAgent     string         `yaml:"user_agent"`
-	AuthPath      string         `yaml:"auth_path"`
-	CacheTTL      time.Duration  `yaml:"cache_ttl"`
-	LogLevel      string         `yaml:"log_level"`
-	LogRequests   bool           `yaml:"log_requests"`
-	KeysPath      string         `yaml:"keys_path"`
-	DefaultRate   string         `yaml:"default_rate"`
-	DefaultBurst  int            `yaml:"default_burst"`
-	DefaultQuota  int64          `yaml:"default_quota_tokens"`
-	StatsPath     string         `yaml:"stats_path"`
-	StatsSummary  string         `yaml:"stats_summary"`
-	StatsMaxBytes int64          `yaml:"stats_max_bytes"`
-	StatsBackups  int            `yaml:"stats_max_backups"`
-	EventsPath    string         `yaml:"events_path"`
-	EventsMax     int64          `yaml:"events_max_bytes"`
-	EventsBackups int            `yaml:"events_max_backups"`
-	AuditPath     string         `yaml:"audit_path"`
-	AuditMaxBytes int64          `yaml:"audit_max_bytes"`
-	AuditBackups  int            `yaml:"audit_max_backups"`
-	MeterWindow   time.Duration  `yaml:"meter_window"`
-	AdminSocket   string         `yaml:"admin_socket"`
-	Payments      PaymentsConfig `yaml:"payments"`
-	Backends      BackendsConfig `yaml:"backends"`
-	Metrics       MetricsConfig  `yaml:"metrics"`
+	Listen            string         `yaml:"listen"`
+	APIKey            string         `yaml:"api_key"`
+	AllowAnyKey       bool           `yaml:"allow_any_key"`
+	AllowRefresh      bool           `yaml:"allow_refresh"`
+	Model             string         `yaml:"model"`
+	Models            []ModelConfig  `yaml:"models"`
+	BaseURL           string         `yaml:"base_url"`
+	Originator        string         `yaml:"originator"`
+	UserAgent         string         `yaml:"user_agent"`
+	AuthPath          string         `yaml:"auth_path"`
+	CacheTTL          time.Duration  `yaml:"cache_ttl"`
+	LogLevel          string         `yaml:"log_level"`
+	LogRequests       bool           `yaml:"log_requests"`
+	KeysPath          string         `yaml:"keys_path"`
+	DefaultRate       string         `yaml:"default_rate"`
+	DefaultBurst      int            `yaml:"default_burst"`
+	DefaultQuota      int64          `yaml:"default_quota_tokens"`
+	StatsPath         string         `yaml:"stats_path"`
+	StatsSummary      string         `yaml:"stats_summary"`
+	StatsMaxBytes     int64          `yaml:"stats_max_bytes"`
+	StatsBackups      int            `yaml:"stats_max_backups"`
+	EventsPath        string         `yaml:"events_path"`
+	EventsMax         int64          `yaml:"events_max_bytes"`
+	EventsBackups     int            `yaml:"events_max_backups"`
+	AuditPath         string         `yaml:"audit_path"`
+	AuditMaxBytes     int64          `yaml:"audit_max_bytes"`
+	AuditBackups      int            `yaml:"audit_max_backups"`
+	TracePath         string         `yaml:"trace_path"`
+	TraceMaxBytes     int64          `yaml:"trace_max_bytes"`
+	TraceBackups      int            `yaml:"trace_max_backups"`
+	UpstreamAuditPath string         `yaml:"upstream_audit_path"`
+	MeterWindow       time.Duration  `yaml:"meter_window"`
+	AdminSocket       string         `yaml:"admin_socket"`
+	Payments          PaymentsConfig `yaml:"payments"`
+	Backends          BackendsConfig `yaml:"backends"`
+	Metrics           MetricsConfig  `yaml:"metrics"`
 }
 
 // MetricsConfig configures per-backend metrics collection.
@@ -200,34 +204,38 @@ func DefaultConfig() Config {
 			Scope:      "openid profile email",
 		},
 		Proxy: ProxyConfig{
-			Listen:        "127.0.0.1:39001",
-			APIKey:        "",
-			AllowAnyKey:   false,
-			AllowRefresh:  false,
-			Model:         "gpt-5.2-codex",
-			BaseURL:       "https://chatgpt.com/backend-api/codex",
-			Originator:    "codex_cli_rs",
-			UserAgent:     "godex/0.0",
-			AuthPath:      "",
-			CacheTTL:      6 * time.Hour,
-			LogLevel:      "info",
-			LogRequests:   false,
-			KeysPath:      "",
-			DefaultRate:   "60/m",
-			DefaultBurst:  10,
-			DefaultQuota:  0,
-			StatsPath:     "",
-			StatsSummary:  "",
-			StatsMaxBytes: 10 * 1024 * 1024,
-			StatsBackups:  3,
-			EventsPath:    "",
-			EventsMax:     1024 * 1024,
-			EventsBackups: 3,
-			AuditPath:     "",
-			AuditMaxBytes: 10 * 1024 * 1024,
-			AuditBackups:  3,
-			MeterWindow:   0,
-			AdminSocket:   "~/.godex/admin.sock",
+			Listen:            "127.0.0.1:39001",
+			APIKey:            "",
+			AllowAnyKey:       false,
+			AllowRefresh:      false,
+			Model:             "gpt-5.2-codex",
+			BaseURL:           "https://chatgpt.com/backend-api/codex",
+			Originator:        "codex_cli_rs",
+			UserAgent:         "godex/0.0",
+			AuthPath:          "",
+			CacheTTL:          6 * time.Hour,
+			LogLevel:          "info",
+			LogRequests:       false,
+			KeysPath:          "",
+			DefaultRate:       "60/m",
+			DefaultBurst:      10,
+			DefaultQuota:      0,
+			StatsPath:         "",
+			StatsSummary:      "",
+			StatsMaxBytes:     10 * 1024 * 1024,
+			StatsBackups:      3,
+			EventsPath:        "",
+			EventsMax:         1024 * 1024,
+			EventsBackups:     3,
+			AuditPath:         "",
+			AuditMaxBytes:     10 * 1024 * 1024,
+			AuditBackups:      3,
+			TracePath:         "",
+			TraceMaxBytes:     25 * 1024 * 1024,
+			TraceBackups:      5,
+			UpstreamAuditPath: "",
+			MeterWindow:       0,
+			AdminSocket:       "~/.godex/admin.sock",
 			Payments: PaymentsConfig{
 				Enabled:       false,
 				Provider:      "l402",
@@ -437,6 +445,22 @@ func ApplyEnv(cfg *Config) {
 		if n, err := parseInt(v); err == nil {
 			cfg.Proxy.AuditBackups = n
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_TRACE_PATH")); v != "" {
+		cfg.Proxy.TracePath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_TRACE_MAX_BYTES")); v != "" {
+		if n, err := parseInt64(v); err == nil {
+			cfg.Proxy.TraceMaxBytes = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_TRACE_MAX_BACKUPS")); v != "" {
+		if n, err := parseInt(v); err == nil {
+			cfg.Proxy.TraceBackups = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("GODEX_UPSTREAM_AUDIT_PATH")); v != "" {
+		cfg.Proxy.UpstreamAuditPath = v
 	}
 	if v := strings.TrimSpace(os.Getenv("GODEX_PROXY_METER_WINDOW")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
