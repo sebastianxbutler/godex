@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.2 - 2026-02-19
+### Fixed
+- **Exec retry-loop guard**: `/v1/responses` now detects repeated `exec` tool failures with empty `{}` arguments and short-circuits the loop with a normal assistant message instead of allowing endless tool retry cycles.
+
 ## 0.9.1 - 2026-02-19
 ### Fixed
 - **Tool-call loop contamination**: Proxy input mapping now drops prior failed tool-call history pairs where a `function_call` had empty `{}` arguments and its matching `function_call_output` was a validation failure. This prevents repeated reinforcement of malformed `exec` calls in subsequent turns.

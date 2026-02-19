@@ -9,6 +9,32 @@ import (
 	"time"
 )
 
+func TestCountInvalidExecPairs(t *testing.T) {
+	items := []OpenAIItem{
+		{Type: "function_call", CallID: "c1", Name: "exec", Arguments: "{}"},
+		{Type: "function_call_output", CallID: "c1", Output: "Validation failed for tool \"exec\":\n  - command: must have required property 'command'"},
+		{Type: "function_call", CallID: "c2", Name: "exec", Arguments: "{}"},
+		{Type: "function_call_output", CallID: "c2", Output: "Validation failed for tool \"exec\":\n  - command: must have required property 'command'"},
+		{Type: "function_call", CallID: "c3", Name: "session_status", Arguments: "{}"},
+		{Type: "function_call_output", CallID: "c3", Output: "ok"},
+	}
+	if got := countInvalidExecPairs(items); got != 2 {
+		t.Fatalf("expected 2 invalid exec pairs, got %d", got)
+	}
+}
+
+func TestCountInvalidExecPairs_IgnoresNonMatching(t *testing.T) {
+	items := []OpenAIItem{
+		{Type: "function_call", CallID: "c1", Name: "exec", Arguments: "{\"command\":\"ls\"}"},
+		{Type: "function_call_output", CallID: "c1", Output: "ok"},
+		{Type: "function_call", CallID: "c2", Name: "read", Arguments: "{}"},
+		{Type: "function_call_output", CallID: "c2", Output: "Validation failed for tool \"read\""},
+	}
+	if got := countInvalidExecPairs(items); got != 0 {
+		t.Fatalf("expected 0 invalid exec pairs, got %d", got)
+	}
+}
+
 func TestRequireAuthAllowAnyKey(t *testing.T) {
 	s := &Server{cfg: Config{AllowAnyKey: true}}
 	rr := httptest.NewRecorder()
