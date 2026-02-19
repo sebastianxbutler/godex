@@ -163,13 +163,7 @@ func (s *Server) harnessResponsesStream(
 				"type":         "response.function_call_arguments.done",
 				"output_index": idx,
 				"item_id":      tc.CallID,
-				"item": map[string]any{
-					"id":        tc.CallID,
-					"type":      "function_call",
-					"call_id":   tc.CallID,
-					"name":      tc.Name,
-					"arguments": tc.Arguments,
-				},
+				"arguments":    tc.Arguments,
 			}
 			if err := emitSSE("sse.response.function_call_arguments.done", argsDone); err != nil {
 				return err

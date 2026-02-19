@@ -375,8 +375,10 @@ func TestResponsesStreamingToolCallContract(t *testing.T) {
 	}
 
 	type sseEvent struct {
-		Type string `json:"type"`
-		Item struct {
+		Type      string `json:"type"`
+		ItemID    string `json:"item_id"`
+		Arguments string `json:"arguments"`
+		Item      struct {
 			Type      string `json:"type"`
 			CallID    string `json:"call_id"`
 			Name      string `json:"name"`
@@ -412,7 +414,7 @@ func TestResponsesStreamingToolCallContract(t *testing.T) {
 				}
 			}
 		case "response.function_call_arguments.done":
-			if ev.Item.CallID == "call_exec_1" && ev.Item.Name == "exec" && ev.Item.Arguments == `{"command":"ls","workdir":"/tmp"}` {
+			if ev.ItemID == "call_exec_1" && ev.Arguments == `{"command":"ls","workdir":"/tmp"}` {
 				sawArgsDone = true
 			}
 		case "response.output_item.done":

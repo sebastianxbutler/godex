@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1 - 2026-02-19
+### Fixed
+- **Responses API tool-arg event shape**: `response.function_call_arguments.done` now emits top-level `arguments` (with `item_id`) instead of nesting arguments under `item`, restoring compatibility with OpenClaw tool-argument parsing.
+- **Regression coverage for tool-call SSE contract**: Added/updated proxy tests to validate `function_call_arguments.done` and `output_item.done` argument payloads for streamed tool calls.
+
 ## 0.10.0 - 2026-02-19
 ### Added
 - **Built-in request replay CLI**: Added `godex proxy replay` to replay previously captured OpenClaw requests directly from trace/audit logs, with request listing and payload export.

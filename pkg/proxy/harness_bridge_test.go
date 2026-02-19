@@ -1,7 +1,12 @@
 package proxy
 
 import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"godex/pkg/harness"
 )
@@ -87,5 +92,58 @@ func TestNormalizeExecToolCall_RepairsEmptyArgs(t *testing.T) {
 	normalizeExecToolCall(turn, tc)
 	if tc.Arguments != `{"command":"ls /home/cmd/clawd"}` {
 		t.Fatalf("unexpected repaired args: %s", tc.Arguments)
+	}
+}
+
+func TestHarnessResponsesStream_FunctionCallArgsDoneHasArguments(t *testing.T) {
+	s := &Server{cache: NewCache(time.Hour)}
+	h := harness.NewMock(harness.MockConfig{
+		Responses: [][]harness.Event{
+			{
+				harness.NewToolCallEvent("call_1", "read", `{"path":"/tmp/a.txt"}`),
+				harness.NewDoneEvent(),
+			},
+		},
+	})
+	turn := &harness.Turn{Model: "gpt-5.3-codex"}
+	rr := httptest.NewRecorder()
+
+	err := s.harnessResponsesStream(
+		context.Background(),
+		rr,
+		rr,
+		h,
+		turn,
+		"gpt-5.3-codex",
+		nil,
+		time.Now(),
+		nil,
+		"",
+		"req_test",
+	)
+	if err != nil {
+		t.Fatalf("harnessResponsesStream error: %v", err)
+	}
+
+	var argsDone map[string]any
+	for _, chunk := range strings.Split(rr.Body.String(), "\n\n") {
+		line := strings.TrimSpace(chunk)
+		if line == "" || !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
+			t.Fatalf("invalid SSE JSON: %v", err)
+		}
+		if ev["type"] == "response.function_call_arguments.done" {
+			argsDone = ev
+			break
+		}
+	}
+	if argsDone == nil {
+		t.Fatalf("missing response.function_call_arguments.done event")
+	}
+	if argsDone["arguments"] != `{"path":"/tmp/a.txt"}` {
+		t.Fatalf("arguments = %#v, want tool-call args", argsDone["arguments"])
 	}
 }
