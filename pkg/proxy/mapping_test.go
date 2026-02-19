@@ -73,6 +73,52 @@ func TestBuildSystemAndInput_ValidToolResult(t *testing.T) {
 	}
 }
 
+func TestBuildSystemAndInput_SkipsFailedEmptyToolCallHistoryPair(t *testing.T) {
+	items := []OpenAIItem{
+		{Type: "message", Role: "user", Content: "Run ls"},
+		{Type: "function_call", CallID: "call_bad_exec", Name: "exec", Arguments: "{}"},
+		{Type: "function_call_output", CallID: "call_bad_exec", Output: "Validation failed for tool \"exec\": command is required"},
+		{Type: "message", Role: "assistant", Content: "Retrying..."},
+	}
+
+	input, _, err := buildSystemAndInput("test-session", items, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Expect: user message + assistant message only; bad call pair skipped.
+	if len(input) != 2 {
+		t.Fatalf("expected 2 items after skipping bad call pair, got %d", len(input))
+	}
+	if input[0].Type != "message" || input[0].Role != "user" {
+		t.Fatalf("unexpected first item: %#v", input[0])
+	}
+	if input[1].Type != "message" || input[1].Role != "assistant" {
+		t.Fatalf("unexpected second item: %#v", input[1])
+	}
+}
+
+func TestBuildSystemAndInput_EmptyArgsCallNotSkippedWithoutValidationFailure(t *testing.T) {
+	items := []OpenAIItem{
+		{Type: "message", Role: "user", Content: "Status?"},
+		{Type: "function_call", CallID: "call_status", Name: "session_status", Arguments: "{}"},
+		{Type: "function_call_output", CallID: "call_status", Output: "ok"},
+	}
+
+	input, _, err := buildSystemAndInput("test-session", items, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Expect all 3 preserved (valid {} args for tools that take no required input).
+	if len(input) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(input))
+	}
+	if input[1].Type != "function_call" || input[1].CallID != "call_status" {
+		t.Fatalf("missing function_call item: %#v", input)
+	}
+}
+
 func TestBuildSystemAndInput_AssistantContentType(t *testing.T) {
 	// Verify that assistant messages use output_text, not input_text
 	// Codex rejects input_text for assistant role

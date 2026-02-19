@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1 - 2026-02-19
+### Fixed
+- **Tool-call loop contamination**: Proxy input mapping now drops prior failed tool-call history pairs where a `function_call` had empty `{}` arguments and its matching `function_call_output` was a validation failure. This prevents repeated reinforcement of malformed `exec` calls in subsequent turns.
+
 ## 0.9.0 - 2026-02-19
 ### Changed
 - **Proxy is now harness-only**: Removed legacy Codex fallback execution paths in `/v1/responses` and `/v1/chat/completions`. Requests now run through harness routing exclusively.

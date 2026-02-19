@@ -544,15 +544,10 @@ func TestResponsesReplayFixtureContract(t *testing.T) {
 				t.Fatalf("expected 1 recorded turn, got %d", len(recorded))
 			}
 			turn := recorded[0]
-			var sawPriorExecFailureHistory bool
 			for _, msg := range turn.Messages {
 				if msg.Role == "assistant" && msg.ToolID == tt.priorFailedCall && msg.Content == "{}" {
-					sawPriorExecFailureHistory = true
-					break
+					t.Fatalf("unexpected retained failed exec tool-call history for %s", tt.priorFailedCall)
 				}
-			}
-			if !sawPriorExecFailureHistory {
-				t.Fatalf("expected prior failed exec tool-call history for %s", tt.priorFailedCall)
 			}
 		})
 	}

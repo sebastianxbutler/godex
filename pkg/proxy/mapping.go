@@ -75,6 +75,30 @@ func buildSystemAndInput(sessionKey string, items []OpenAIItem, cache *Cache) ([
 	var systemParts []string
 	var input []protocol.ResponseInputItem
 	seenCalls := map[string]bool{}
+	skipBadEmptyCall := map[string]bool{}
+
+	// First pass: identify tool-call IDs that were emitted with empty args and
+	// later failed validation. Keeping these pairs in history can reinforce the
+	// bad pattern on subsequent turns.
+	emptyArgsCall := map[string]bool{}
+	validationFailed := map[string]bool{}
+	for _, item := range items {
+		switch item.Type {
+		case "function_call":
+			if item.CallID != "" && strings.TrimSpace(item.Arguments) == "{}" {
+				emptyArgsCall[item.CallID] = true
+			}
+		case "function_call_output":
+			if item.CallID != "" && strings.Contains(strings.ToLower(item.Output), "validation failed for tool") {
+				validationFailed[item.CallID] = true
+			}
+		}
+	}
+	for callID := range emptyArgsCall {
+		if validationFailed[callID] {
+			skipBadEmptyCall[callID] = true
+		}
+	}
 
 	for _, item := range items {
 		switch item.Type {
@@ -82,11 +106,17 @@ func buildSystemAndInput(sessionKey string, items []OpenAIItem, cache *Cache) ([
 			if item.CallID == "" {
 				return nil, "", errors.New("function_call missing call_id")
 			}
+			if skipBadEmptyCall[item.CallID] {
+				continue
+			}
 			seenCalls[item.CallID] = true
 			input = append(input, protocol.FunctionCallInput(item.Name, item.CallID, item.Arguments))
 		case "function_call_output":
 			if item.CallID == "" {
 				return nil, "", errors.New("function_call_output missing call_id")
+			}
+			if skipBadEmptyCall[item.CallID] {
+				continue
 			}
 			if !seenCalls[item.CallID] {
 				// Try to recover the function_call from cache
